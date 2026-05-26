@@ -1,0 +1,13 @@
+[package]
+name = "hybrid-demo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+hansa = { path = "../../crates/hansa" }
+skeg-rigging = { path = "../../../skeg-rigging/crates/skeg-rigging" }
+skeg-rigging-net = { path = "../../../skeg-rigging-net/crates/skeg-rigging-net" }
+skeg-rigging-net-http = { path = "../../../skeg-rigging-net/crates/skeg-rigging-net-http" }
+skeg-rigging-skeg = { path = "../../../skeg-rigging/crates/skeg-rigging-skeg" }
+tempfile = "3"

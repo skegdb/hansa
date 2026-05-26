@@ -1,0 +1,51 @@
+[package]
+name = "hansa"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Federation primitive for skeg: local AI agents form trust groups and query across each other's memory."
+readme = "../../README.md"
+keywords = ["skeg", "federation", "vector", "local-ai", "hansa"]
+categories = ["database", "concurrency"]
+
+[dependencies]
+skeg-rigging = { workspace = true }
+skeg-rigging-net = { workspace = true }
+skeg-rigging-net-http = { workspace = true }
+skeg-hull = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+zeroize = { workspace = true }
+fs2 = { workspace = true }
+rayon = { workspace = true }
+parking_lot = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+skeg-rigging-skeg = { workspace = true }
+skeg-multi-tenant = { path = "../../../skeg-tenant/crates/skeg-multi-tenant", version = "0.1.0" }
+tempfile = "3"
+assert_cmd = "2"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "saga_build"
+harness = false
+
+[[bench]]
+name = "saga_score"
+harness = false
+
+[[bench]]
+name = "context_assembly"
+harness = false
+
+[lints]
+workspace = true

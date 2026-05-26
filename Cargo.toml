@@ -1,0 +1,43 @@
+[workspace]
+members = [
+    "crates/hansa",
+    "examples/three-agents",
+    "examples/hansa-agent",
+    "examples/bench-report",
+    "examples/hybrid-demo",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/skegdb/hansa"
+homepage = "https://github.com/skegdb/hansa"
+authors = ["skeg contributors"]
+
+[workspace.dependencies]
+skeg-rigging = { path = "../skeg-rigging/crates/skeg-rigging", version = "0.1.0" }
+skeg-rigging-skeg = { path = "../skeg-rigging/crates/skeg-rigging-skeg", version = "0.1.0" }
+skeg-rigging-net = { path = "../skeg-rigging-net/crates/skeg-rigging-net", version = "0.1.0" }
+skeg-rigging-net-http = { path = "../skeg-rigging-net/crates/skeg-rigging-net-http", version = "0.1.0" }
+skeg-hull = { path = "../skeg-hull/crates/skeg-hull", version = "0.1.0" }
+bytes = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+fs2 = "0.4"
+rayon = "1"
+parking_lot = "0.12"
+rand = "0.9"
+
+[workspace.lints.clippy]
+uninlined_format_args = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3

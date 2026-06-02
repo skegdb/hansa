@@ -1396,7 +1396,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures-core",
- "skeg-hull",
  "thiserror",
  "tokio",
 ]
@@ -1436,7 +1435,6 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "skeg-hull",
  "skeg-rigging",
  "skeg-vector",
  "thiserror",
@@ -1453,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "skeg-tenant"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ahash",
  "argon2",

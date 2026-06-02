@@ -51,7 +51,7 @@ tokio = [
 
 [dev-dependencies]
 skeg-rigging-skeg = { workspace = true }
-skeg-multi-tenant = { path = "../../../skeg-tenant/crates/skeg-multi-tenant", version = "0.1.0" }
+skeg-multi-tenant = { path = "../../../skeg/crates/skeg-multi-tenant", version = "0.1.0" }
 skeg-rigging = { workspace = true, features = ["async"] }
 tempfile = "3"
 assert_cmd = "2"

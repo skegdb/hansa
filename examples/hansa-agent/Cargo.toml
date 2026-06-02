@@ -15,3 +15,5 @@ skeg-rigging-skeg = { path = "../../../skeg-rigging/crates/skeg-rigging-skeg" }
 skeg-rigging-net = { path = "../../../skeg-rigging-net/crates/skeg-rigging-net" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+[features]
+tokio = ["hansa/tokio"]

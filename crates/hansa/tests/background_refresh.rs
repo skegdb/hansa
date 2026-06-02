@@ -61,6 +61,8 @@ fn background_task_rebuilds_saga_after_growth() {
         saga_dir,
         peer_opener: None,
         default_budget: TokenBudget::default(),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
     })
     .unwrap();
     handle.join(vec!["topic".into(); 20]).expect("join");

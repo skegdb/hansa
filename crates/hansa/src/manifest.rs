@@ -118,17 +118,17 @@ impl PeerManifest {
     ///
     /// Three regimes:
     ///
-    /// - **Unknown** (`total_hits == 0`) — returns `1.0`. We've
+    /// - **Unknown** (`total_hits == 0`) - returns `1.0`. We've
     ///   never queried the peer; no signal either way.
     /// - **Trial** (`useful_hits == 0` and `total_hits < TRIAL_RETURNS`)
-    ///   — returns `1.0`. Give every new peer the same `TRIAL_RETURNS`
+    ///   - returns `1.0`. Give every new peer the same `TRIAL_RETURNS`
     ///   queries' worth of cooperation before any judgement.
     /// - **Cold** (F.4: `useful_hits == 0` and
-    ///   `total_hits >= TRIAL_RETURNS`) — returns `< 1.0`. Each
+    ///   `total_hits >= TRIAL_RETURNS`) - returns `< 1.0`. Each
     ///   additional dud return past the trial period drags the
     ///   factor toward `1.0 - NEGATIVE_BIAS_CAP`. The peer is not
     ///   banned outright; a high saga score can still surface it.
-    /// - **Useful** (F.5: `useful_hits > 0`) — returns
+    /// - **Useful** (F.5: `useful_hits > 0`) - returns
     ///   `1.0 + min(BIAS_CAP, useful_ratio * recency)`. Capped at
     ///   `1.0 + BIAS_CAP`.
     pub fn usefulness_factor(&self, now_unix_s: u64) -> f32 {

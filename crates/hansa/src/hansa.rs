@@ -56,6 +56,12 @@ pub struct HansaConfig<T> {
     /// Default budget for [`Hansa::query`]. The query builder lets a
     /// caller override this.
     pub default_budget: TokenBudget,
+    /// Async peer opener used by [`Hansa::query_async`]. Only present
+    /// when the `tokio` feature is enabled. Set to `None` to leave
+    /// async queries in local-only mode; set to `Some(opener)` to
+    /// enable the Tokio fan-out path.
+    #[cfg(feature = "tokio")]
+    pub async_peer_opener: Option<crate::membrane::AsyncPeerOpener>,
 }
 
 /// Open handle to a hansa from one member's perspective.
@@ -73,6 +79,9 @@ pub struct Hansa<T> {
     /// at `open` time. Reads/writes go through this; missing files
     /// are treated as neutral manifests.
     manifest_store: Arc<ManifestStore>,
+    /// Async peer opener used by `query_async` (tokio feature).
+    #[cfg(feature = "tokio")]
+    async_peer_opener: Option<crate::membrane::AsyncPeerOpener>,
 }
 
 impl<T> Hansa<T>
@@ -103,6 +112,8 @@ where
             peer_opener: config.peer_opener,
             default_budget: config.default_budget,
             manifest_store,
+            #[cfg(feature = "tokio")]
+            async_peer_opener: config.async_peer_opener,
         })
     }
 
@@ -289,6 +300,66 @@ where
     }
 }
 
+#[cfg(feature = "tokio")]
+impl<T> Hansa<T>
+where
+    T: IterVectors + QueryFiltered + Send + Sync + 'static,
+{
+    /// Async counterpart of [`Self::query`]. Returns a builder that
+    /// fans out peer queries via `tokio::spawn` instead of
+    /// `std::thread`.
+    ///
+    /// Requires the `tokio` feature. The caller must already be
+    /// running under a Tokio runtime; building the query is
+    /// synchronous, only `execute()` is async.
+    ///
+    /// If no [`crate::membrane::AsyncPeerOpener`] was provided via
+    /// [`crate::HansaConfig::async_peer_opener`], the query falls back
+    /// to local-only.
+    pub fn query_async<'a>(
+        &'a self,
+        embedding: &[f32],
+    ) -> Result<crate::membrane::MembraneQueryAsync<'a, T>> {
+        let members = self.registry.members(self.id)?;
+        let mut sagas: Vec<(MemberRecord, Saga)> = Vec::with_capacity(members.len());
+        for m in &members {
+            if m.tenant_id == self.local_tenant_id {
+                continue;
+            }
+            if let Some(saga) = self.load_peer_saga(m.tenant_id)? {
+                sagas.push((m.clone(), saga));
+            }
+        }
+
+        let (peer_opener, local_only) = match &self.async_peer_opener {
+            Some(o) => (o.clone(), false),
+            None => (async_placeholder_opener(), true),
+        };
+
+        Ok(crate::membrane::MembraneQueryAsync {
+            local_tenant: self.local_tenant.as_ref(),
+            local_tenant_id: self.local_tenant_id,
+            peer_opener,
+            embedding: embedding.to_vec(),
+            members,
+            sagas,
+            top_k: 10,
+            budget: self.default_budget,
+            min_similarity: f32::NEG_INFINITY,
+            local_only,
+            deadline: None,
+            manifest_store: self.manifest_store.clone(),
+        })
+    }
+}
+
+#[cfg(feature = "tokio")]
+fn async_placeholder_opener() -> crate::membrane::AsyncPeerOpener {
+    Arc::new(|_tid, _loc| {
+        Box::pin(async { Err(skeg_rigging::OpenError::NotFound) })
+    })
+}
+
 fn placeholder_opener() -> PeerOpener {
     Arc::new(|_tid, _loc| Err(skeg_rigging::OpenError::NotFound))
 }
@@ -353,6 +424,8 @@ mod tests {
             saga_dir,
             peer_opener: None,
             default_budget: crate::membrane::TokenBudget::default(),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
         })
         .unwrap();
         (handle, id)

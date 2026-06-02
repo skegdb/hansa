@@ -18,7 +18,10 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use hansa::saga::{build_saga_from_tenant, score_saga};
-use hansa::{CharCountTokenizer, ContextBuilder, HitOrigin, MembraneHit};
+use hansa::{
+    BundleCache, CharCountTokenizer, ContextBuilder, ContextBundle, HitOrigin, ManifestStore,
+    MembraneHit, PeerManifest,
+};
 use skeg_rigging::{RecordId, TenantId};
 
 /// Gates only make sense in release mode; debug code is roughly an
@@ -72,6 +75,31 @@ const GATE_TOKEN_BUDGET_OVERFLOW: usize = 0;
 /// should not be empty when the corpus contains relevant hits. Catches
 /// regressions where over-eager filtering eats everything.
 const GATE_MIN_BUNDLE_ITEMS: usize = 1;
+
+// ── F.5 / F.4 manifest gates ────────────────────────────────────────
+
+/// `PeerManifest::usefulness_factor` is called once per peer on the
+/// hot path of every fan-out. Must stay below 1 us best-of-100.
+const GATE_MANIFEST_FACTOR_US: u128 = 1;
+
+/// `ManifestStore::read` on a populated manifest file. Includes one
+/// `fs::read` + `serde_json::from_slice`. Measured best ~14 us on M-series;
+/// gate at 50 us (3-4x headroom).
+const GATE_MANIFEST_READ_US: u128 = 50;
+
+/// `ManifestStore::write` (temp + rename). One `fs::write` + one
+/// `fs::rename`. Best-of-50 below 2 ms.
+const GATE_MANIFEST_WRITE_MS: u128 = 2;
+
+// ── F.8 bundle cache gates ──────────────────────────────────────────
+
+/// `BundleCache::get` on a hit. Cosine of two unit vectors + clone.
+/// Best-of-100 below 10 us at dim=32 with 16 cached entries.
+const GATE_BUNDLE_CACHE_HIT_US: u128 = 10;
+
+/// `BundleCache::get` on a miss (no entry past threshold). Scans every
+/// entry. Best-of-100 below 10 us at dim=32 with 16 entries.
+const GATE_BUNDLE_CACHE_MISS_US: u128 = 10;
 
 // ─────────────────────────────────────────────────────────────────────
 // Helpers
@@ -317,4 +345,168 @@ fn synthetic_corpus(count: usize, chars: usize, dup_ratio: f32) -> Vec<MembraneH
         });
     }
     out
+}
+
+// ─── F.5 / F.4 manifest gates ───────────────────────────────────────
+
+#[test]
+fn gate_manifest_factor_under_threshold() {
+    if skip_unless_release() {
+        return;
+    }
+    // Worst-case manifest: useful path with full math (recency + ratio).
+    let m = PeerManifest {
+        peer_id_bytes: [0x42; 16],
+        useful_hits: 25,
+        total_hits: 50,
+        last_useful_at: 1_700_000_000,
+    };
+    let now = 1_700_000_100u64;
+    // Warm-up.
+    for _ in 0..16 {
+        let _ = m.usefulness_factor(now);
+    }
+    let mut best_us = u128::MAX;
+    for _ in 0..100 {
+        let t = Instant::now();
+        let _ = m.usefulness_factor(now);
+        best_us = best_us.min(t.elapsed().as_micros());
+    }
+    eprintln!("[gate] manifest_factor best-of-100 = {best_us} us (cap {GATE_MANIFEST_FACTOR_US})");
+    assert!(
+        best_us <= GATE_MANIFEST_FACTOR_US,
+        "usefulness_factor best-of-100 = {best_us} us, gate \
+         {GATE_MANIFEST_FACTOR_US} us"
+    );
+}
+
+#[test]
+fn gate_manifest_read_under_threshold() {
+    if skip_unless_release() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let store = ManifestStore::new(dir.path());
+    let peer = TenantId::from_bytes([0x77; 16]);
+    store
+        .write(&PeerManifest {
+            peer_id_bytes: *peer.as_bytes(),
+            useful_hits: 42,
+            total_hits: 50,
+            last_useful_at: 1_700_000_000,
+        })
+        .unwrap();
+    // Warm-up the FS cache.
+    for _ in 0..5 {
+        let _ = store.read(peer);
+    }
+    let mut best_us = u128::MAX;
+    for _ in 0..100 {
+        let t = Instant::now();
+        let _ = store.read(peer);
+        best_us = best_us.min(t.elapsed().as_micros());
+    }
+    eprintln!("[gate] manifest_read best-of-100 = {best_us} us (cap {GATE_MANIFEST_READ_US})");
+    assert!(
+        best_us <= GATE_MANIFEST_READ_US,
+        "manifest_read best-of-100 = {best_us} us, gate \
+         {GATE_MANIFEST_READ_US} us"
+    );
+}
+
+#[test]
+fn gate_manifest_write_under_threshold() {
+    if skip_unless_release() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let store = ManifestStore::new(dir.path());
+    let peer = TenantId::from_bytes([0x88; 16]);
+    let mut m = PeerManifest::empty(peer);
+    // Warm-up.
+    for _ in 0..3 {
+        store.write(&m).unwrap();
+    }
+    let mut best_ms = u128::MAX;
+    for i in 0..50u64 {
+        m.useful_hits = i;
+        let t = Instant::now();
+        store.write(&m).unwrap();
+        best_ms = best_ms.min(t.elapsed().as_millis());
+    }
+    eprintln!("[gate] manifest_write best-of-50 = {best_ms} ms (cap {GATE_MANIFEST_WRITE_MS})");
+    assert!(
+        best_ms <= GATE_MANIFEST_WRITE_MS,
+        "manifest_write best-of-50 = {best_ms} ms, gate \
+         {GATE_MANIFEST_WRITE_MS} ms"
+    );
+}
+
+// ─── F.8 bundle cache gates ─────────────────────────────────────────
+
+fn unit_vec(at: usize, dim: usize) -> Vec<f32> {
+    let mut v = vec![0.0f32; dim];
+    v[at] = 1.0;
+    v
+}
+
+#[test]
+fn gate_bundle_cache_hit_under_threshold() {
+    if skip_unless_release() {
+        return;
+    }
+    let dim = 32usize;
+    let mut cache = BundleCache::new(dim);
+    for i in 0..16usize {
+        cache.insert(unit_vec(i % dim, dim), ContextBundle::default());
+    }
+    let probe = unit_vec(0, dim);
+    // Warm-up.
+    for _ in 0..16 {
+        let _ = cache.get(&probe);
+    }
+    let mut best_us = u128::MAX;
+    for _ in 0..100 {
+        let t = Instant::now();
+        let _ = cache.get(&probe);
+        best_us = best_us.min(t.elapsed().as_micros());
+    }
+    eprintln!("[gate] bundle_cache_hit best-of-100 = {best_us} us (cap {GATE_BUNDLE_CACHE_HIT_US})");
+    assert!(
+        best_us <= GATE_BUNDLE_CACHE_HIT_US,
+        "BundleCache::get(hit) best-of-100 = {best_us} us, gate \
+         {GATE_BUNDLE_CACHE_HIT_US} us"
+    );
+}
+
+#[test]
+fn gate_bundle_cache_miss_under_threshold() {
+    if skip_unless_release() {
+        return;
+    }
+    let dim = 32usize;
+    let mut cache = BundleCache::new(dim);
+    for i in 0..16usize {
+        cache.insert(unit_vec(i % dim, dim), ContextBundle::default());
+    }
+    // Probe an axis with no cached entry near it.
+    let mut probe = vec![0.0f32; dim];
+    probe[dim - 1] = 1.0;
+    probe[dim - 2] = -1.0;
+    // Warm-up.
+    for _ in 0..16 {
+        let _ = cache.get(&probe);
+    }
+    let mut best_us = u128::MAX;
+    for _ in 0..100 {
+        let t = Instant::now();
+        let _ = cache.get(&probe);
+        best_us = best_us.min(t.elapsed().as_micros());
+    }
+    eprintln!("[gate] bundle_cache_miss best-of-100 = {best_us} us (cap {GATE_BUNDLE_CACHE_MISS_US})");
+    assert!(
+        best_us <= GATE_BUNDLE_CACHE_MISS_US,
+        "BundleCache::get(miss) best-of-100 = {best_us} us, gate \
+         {GATE_BUNDLE_CACHE_MISS_US} us"
+    );
 }

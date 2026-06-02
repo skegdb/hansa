@@ -94,6 +94,8 @@ fn spawn_agent(
         saga_dir,
         peer_opener: Some(multi_tenant_opener(root.clone())),
         default_budget: TokenBudget::split(20, 30),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
     })
     .unwrap();
 
@@ -226,6 +228,8 @@ fn quota_capped_tenant_blocks_membrane_writes() {
         saga_dir,
         peer_opener: Some(multi_tenant_opener(root.clone())),
         default_budget: TokenBudget::split(20, 30),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
     })
     .unwrap();
     let hits = hansa.query(&unit(0)).unwrap().top_k(10).local_only().execute().unwrap();

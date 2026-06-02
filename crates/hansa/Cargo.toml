@@ -27,13 +27,36 @@ fs2 = { workspace = true }
 rayon = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
+tiktoken-rs = { version = "0.6", optional = true }
+async-trait = { version = "0.1", optional = true }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"], optional = true }
+futures-util = { version = "0.3", optional = true }
+
+[features]
+default = []
+# Exact OpenAI BPE tokenizer (GPT-3.5, GPT-4, GPT-4o, ...).
+# Adds ~6 MB to the binary (downloaded BPE tables embedded). Use when
+# the bundle budget is a real OpenAI prompt cap and `CharCountTokenizer`
+# (chars/4) is too lossy.
+tiktoken = ["dep:tiktoken-rs"]
+# Async query path (F.6) via Tokio. Adds `Hansa::query_async` returning
+# a `MembraneQueryAsync` that fans out via `tokio::spawn` instead of
+# `std::thread`. Requires `skeg-rigging/async` for the trait surface.
+tokio = [
+    "dep:async-trait",
+    "dep:tokio",
+    "dep:futures-util",
+    "skeg-rigging/async",
+]
 
 [dev-dependencies]
 skeg-rigging-skeg = { workspace = true }
 skeg-multi-tenant = { path = "../../../skeg-tenant/crates/skeg-multi-tenant", version = "0.1.0" }
+skeg-rigging = { workspace = true, features = ["async"] }
 tempfile = "3"
 assert_cmd = "2"
 criterion = { version = "0.5", features = ["html_reports"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
 name = "saga_build"

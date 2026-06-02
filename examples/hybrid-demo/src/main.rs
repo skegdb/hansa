@@ -134,6 +134,8 @@ fn populate_and_serve(
         saga_dir: saga_dir.clone(),
         peer_opener: None,
         default_budget: TokenBudget::default(),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
     })
     .unwrap();
     handle
@@ -211,6 +213,8 @@ fn main() {
         saga_dir: saga_dir_a,
         peer_opener: Some(path_only_opener()),
         default_budget: TokenBudget::split(10, 15),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
     })
     .expect("open A");
 

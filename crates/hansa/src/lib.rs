@@ -44,6 +44,8 @@ pub mod member;
 pub mod membrane;
 pub mod registry;
 pub mod saga;
+#[cfg(feature = "tiktoken")]
+pub mod tiktoken;
 
 pub use background::{BackgroundRefreshConfig, RefreshHandle};
 pub use cache::BundleCache;
@@ -61,6 +63,8 @@ pub use member::MemberRecord;
 pub use membrane::{HitOrigin, MembraneHit, MembraneStats, PeerOpener, TokenBudget};
 pub use registry::{FileRegistry, Registry};
 pub use saga::Saga;
+#[cfg(feature = "tiktoken")]
+pub use tiktoken::TiktokenTokenizer;
 
 /// Crate result alias.
 pub type Result<T> = std::result::Result<T, HansaError>;

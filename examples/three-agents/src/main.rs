@@ -84,6 +84,8 @@ fn spawn_agent(
         saga_dir,
         peer_opener: Some(path_only_opener()),
         default_budget: TokenBudget::split(8, 12),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
     })
     .unwrap();
 

@@ -25,8 +25,8 @@
 //! - TTL: each entry has a wall-clock expiry; the default is 60 s
 //!   ([`BundleCache::DEFAULT_TTL`]).
 //! - Local writes: the cache cannot see them. Callers that
-//!   [`crate::Hansa::insert`] (or otherwise mutate the local tenant)
-//!   must call [`Self::invalidate_all`] afterwards. v0.1 keeps this
+//!   `Hansa::insert` (or otherwise mutate the local tenant)
+//!   must call [`BundleCache::invalidate_all`] afterwards. v0.1 keeps this
 //!   explicit; F.13 events will let the cache subscribe on its own.
 //!
 //! ## Usage

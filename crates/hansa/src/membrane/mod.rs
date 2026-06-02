@@ -18,9 +18,13 @@
 //! Local hits are always included.
 
 mod allocation;
+#[cfg(feature = "tokio")]
+pub mod async_query;
 mod budget;
 mod query;
 
 pub use allocation::{DEFAULT_MAX_PEERS, PeerAllocation, proportional_allocation};
+#[cfg(feature = "tokio")]
+pub use async_query::{AsyncPeerOpener, MembraneQueryAsync, PeerOpenFuture};
 pub use budget::TokenBudget;
 pub use query::{HitOrigin, MembraneHit, MembraneQuery, MembraneStats, PeerOpener};

@@ -114,6 +114,8 @@ fn spawn_with_opener(
         saga_dir,
         peer_opener: Some(opener),
         default_budget: TokenBudget::split(20, 30),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
     })
     .unwrap()
 }

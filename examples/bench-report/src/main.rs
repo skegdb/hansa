@@ -303,6 +303,8 @@ fn spawn_agent(root: &std::path::Path, label: u8, axis: usize) -> Agent {
             _ => Err(skeg_rigging::OpenError::NotFound),
         })),
         default_budget: TokenBudget::split(20, 30),
+            #[cfg(feature = "tokio")]
+            async_peer_opener: None,
     })
     .unwrap();
     Agent { hansa }
@@ -431,6 +433,81 @@ fn report_token_economics() {
             ),
         );
     }
+    println!();
+
+    // F.55: actual JSON-vs-binary envelope size on the wire.
+    println!(
+        "  {}",
+        bold("F.55 - envelope size on the wire (JSON vs binary)")
+    );
+    for &(payload_size, label) in &[
+        (50usize, "    50 B payload"),
+        (500, "   500 B payload"),
+        (1_000, " 1 000 B payload"),
+        (10_000, "10 000 B payload"),
+    ] {
+        let payload: Vec<u8> = (0..payload_size).map(|i| ((i % 26) as u8) + b'a').collect();
+        let env = skeg_rigging_net::RecordEnvelope::new(
+            true,
+            vec!["topic".into(), "skill:python".into()],
+            payload,
+        );
+        let json = env.encode();
+        let bin = env.encode_binary();
+        let ratio = json.len() as f32 / bin.len() as f32;
+        submetric(
+            label,
+            &format!(
+                "json {:>7} -> bin {:>7}   {}",
+                pretty_bytes(json.len()),
+                pretty_bytes(bin.len()),
+                green(&format!("{ratio:.1}x smaller"))
+            ),
+        );
+    }
+    println!();
+
+    // F.20: zstd payload compression on different corpora.
+    println!(
+        "  {}",
+        bold("F.20 - zstd payload compression (binary -> binary+zstd)")
+    );
+    let prose = "the quick brown fox jumps over the lazy dog. ".repeat(500);
+    let markdown =
+        "# Title\n\nParagraph with **bold** and `code`.\n\n- item one\n- item two\n".repeat(100);
+    let pseudo_random: Vec<u8> = (0..10_000u32)
+        .map(|i| ((i.wrapping_mul(2654435761) >> 24) & 0xFF) as u8)
+        .collect();
+    let cases: &[(&str, Vec<u8>)] = &[
+        ("English prose, ~22 KB    ", prose.into_bytes()),
+        ("Markdown,      ~ 7 KB    ", markdown.into_bytes()),
+        ("Pseudo-random, ~10 KB    ", pseudo_random),
+    ];
+    for (label, payload) in cases {
+        let env = skeg_rigging_net::RecordEnvelope::new(true, vec!["topic".into()], payload.clone());
+        let plain = env.encode_binary();
+        let zstd = env.encode_binary_zstd(skeg_rigging_net::DEFAULT_ZSTD_LEVEL);
+        let smallest = env.encode_binary_smallest();
+        let ratio = plain.len() as f32 / zstd.len() as f32;
+        let badge = if smallest.len() == zstd.len() {
+            green(&format!("{ratio:.1}x smaller"))
+        } else {
+            yellow(&format!("{ratio:.2}x (plain wins)"))
+        };
+        submetric(
+            label,
+            &format!(
+                "plain {:>7} -> zstd {:>7}   {}",
+                pretty_bytes(plain.len()),
+                pretty_bytes(zstd.len()),
+                badge,
+            ),
+        );
+    }
+    submetric(
+        "rule of thumb",
+        &dim("zstd wins on text/markdown/code; loses on already-compressed or random bytes"),
+    );
     println!();
 
     // 3) Rendering overhead per item.
@@ -898,6 +975,153 @@ fn report_m2_polish() {
             }
         ),
     );
+    println!();
+
+    // ─── F.5 / F.4 manifest hot-path latency ──────────────────────
+    println!("  {}", bold("F.5/F.4 - Manifest bias hot path"));
+    let m = PeerManifest {
+        peer_id_bytes: [0x42; 16],
+        useful_hits: 25,
+        total_hits: 50,
+        last_useful_at: 1_700_000_000,
+    };
+    let now = 1_700_000_100u64;
+    for _ in 0..16 {
+        let _ = m.usefulness_factor(now);
+    }
+    let runs = 1000;
+    let start = Instant::now();
+    let mut sink = 0.0f32;
+    for _ in 0..runs {
+        sink += m.usefulness_factor(now);
+    }
+    let factor_ns = start.elapsed().as_nanos() as f64 / runs as f64;
+    let _ = sink;
+    submetric(
+        "usefulness_factor (mixed math)",
+        &format!("{:>6.0} ns / call ({runs} iters)", factor_ns),
+    );
+
+    let mdir = tempfile::tempdir().unwrap();
+    let store = ManifestStore::new(mdir.path());
+    let peer = TenantId::from_bytes([0x77; 16]);
+    store.write(&m).unwrap();
+    for _ in 0..5 {
+        let _ = store.read(peer);
+    }
+    let runs = 500;
+    let start = Instant::now();
+    for _ in 0..runs {
+        let _ = store.read(peer);
+    }
+    let read_us = start.elapsed().as_secs_f64() * 1e6 / runs as f64;
+    submetric(
+        "ManifestStore::read (fs + json)",
+        &format!("{:>6.1} µs / call ({runs} iters)", read_us),
+    );
+
+    let runs = 100;
+    let mut mw = m.clone();
+    let start = Instant::now();
+    for i in 0..runs {
+        mw.useful_hits = i;
+        store.write(&mw).unwrap();
+    }
+    let write_us = start.elapsed().as_secs_f64() * 1e6 / runs as f64;
+    submetric(
+        "ManifestStore::write (atomic)",
+        &format!("{:>6.1} µs / call ({runs} iters)", write_us),
+    );
+    submetric(
+        "implication",
+        &dim("bias is free on the read path; write only on user-accepted hits"),
+    );
+}
+
+// ─── Tokenizer accuracy: chars/4 vs real BPE ────────────────────────
+
+fn report_tokenizer_accuracy() {
+    rule("TOKENIZER ACCURACY - chars/4 vs OpenAI BPE");
+    println!(
+        "  {}",
+        dim(
+            "OpenAI's published rule of thumb is ~4 chars/token; CharCountTokenizer\n  \
+             implements exactly that. Real BPE diverges on short text, punctuation,\n  \
+             numbers, code, and non-ASCII. Numbers below: how big the gap is in practice."
+        )
+    );
+    println!();
+
+    let chars = hansa::CharCountTokenizer;
+    let gpt4o = hansa::TiktokenTokenizer::gpt4o();
+    let gpt4 = hansa::TiktokenTokenizer::gpt4();
+
+    let samples: &[(&str, &str)] = &[
+        (
+            "English prose ~1 KB",
+            "The quick brown fox jumps over the lazy dog. The dog barks back, \
+             unimpressed by the fox's apparent agility. This sentence repeats \
+             several times to make a kilobyte of text suitable for tokenizer \
+             evaluation. ".trim_ascii_end(),
+        ),
+        (
+            "Markdown heavy",
+            "# Heading\n\nA paragraph with **bold** and *italic* and `inline code`.\n\n\
+             - item one\n- item two\n- item three\n\n```rust\nfn main() { println!(\"hi\"); }\n```\n",
+        ),
+        (
+            "JSON envelope    ",
+            "{\"shareable\":true,\"tags\":[\"topic\",\"skill:python\"],\
+             \"payload\":[104,101,108,108,111,32,119,111,114,108,100]}",
+        ),
+        (
+            "URL + numbers    ",
+            "Visit https://example.com/api/v3/items?id=42&page=3&per_page=100 \
+             for the JSON. Expected response time: 250ms p99, 50ms p50.",
+        ),
+        (
+            "Code snippet     ",
+            "fn cosine(a: &[f32], b: &[f32]) -> f32 {\n  \
+             a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()\n}\n",
+        ),
+        (
+            "Italian          ",
+            "La volpe veloce salta sopra il cane pigro. Il cane abbaia in risposta, \
+             senza essere impressionato dall'agilita apparente della volpe.",
+        ),
+        (
+            "Japanese (CJK)   ",
+            "日本語の文書をトークン化するときの動作を確認しましょう。",
+        ),
+    ];
+
+    for (label, text) in samples {
+        let by_chars = chars.count(text);
+        let by_gpt4o = gpt4o.count(text);
+        let by_gpt4 = gpt4.count(text);
+        let drift_pct = ((by_chars as f32 - by_gpt4o as f32) / by_gpt4o.max(1) as f32) * 100.0;
+        let badge = if drift_pct.abs() <= 30.0 {
+            green(&format!("{drift_pct:+5.0}%"))
+        } else {
+            yellow(&format!("{drift_pct:+5.0}%"))
+        };
+        submetric(
+            label,
+            &format!(
+                "chars/4={by_chars:>4}  gpt-4o={by_gpt4o:>4}  gpt-4={by_gpt4:>4}  drift {} vs gpt-4o",
+                badge,
+            ),
+        );
+    }
+    println!();
+    submetric(
+        "rule of thumb",
+        &dim("CharCountTokenizer drifts well within 30% on English prose; double-digit on code, JSON, CJK"),
+    );
+    submetric(
+        "recommendation",
+        &dim("ContextBuilder::tokenizer(Arc::new(TiktokenTokenizer::gpt4o())) for production prompts"),
+    );
 }
 
 // ─── Main ────────────────────────────────────────────────────────────
@@ -914,6 +1138,7 @@ fn main() {
     report_membrane();
     report_token_economics();
     report_m2_polish();
+    report_tokenizer_accuracy();
     println!();
     println!(
         "  {}",

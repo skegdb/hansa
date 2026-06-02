@@ -119,17 +119,41 @@ pub struct ContextBundle {
 /// Token-counting strategy. The builder calls this for every candidate.
 ///
 /// hansa does not pin a specific tokenizer because vocabularies differ
-/// across models. Real applications should pass a model-specific impl
-/// (e.g. wrapping `tiktoken-rs` for GPT-style models). For tests and
-/// demos, [`CharCountTokenizer`] is a coarse but fast fallback.
+/// across models. Three production-ready options ship with the crate:
+///
+/// - [`CharCountTokenizer`] - cheap rule-of-thumb (chars/4). Default.
+///   Matches OpenAI's own rule of thumb but drifts from real BPE on
+///   short text, punctuation, numbers, and non-English content.
+/// - `TiktokenTokenizer` (behind the `tiktoken` feature) - exact BPE
+///   counts for GPT-3.5 / GPT-4 / GPT-4o etc via `tiktoken-rs`. Use
+///   this when the budget is a real OpenAI prompt cap and you need
+///   ±0 accuracy.
+/// - Bring your own: implement the trait against your model's
+///   tokenizer (Claude, Gemini, Llama).
 pub trait Tokenizer: Send + Sync {
     /// Count tokens in `text`.
     fn count(&self, text: &str) -> usize;
 }
 
-/// Coarse default: roughly one token per four characters. Within ~30%
-/// of real BPE counts for English prose; useful for tests, not for
-/// production prompts.
+/// Cheap rule-of-thumb tokenizer: roughly one token per four
+/// characters. Matches OpenAI's own published rule of thumb
+/// ([help.openai.com - tokens])
+/// to first-order, but drifts in the obvious cases:
+///
+/// - **Short text** (< 50 chars): real BPE merges differently, can
+///   be off by ±50%.
+/// - **Punctuation / numbers**: each digit is often its own token in
+///   real BPE; `chars/4` underestimates.
+/// - **Non-ASCII**: a single accented or CJK character is often 2-3
+///   tokens; `chars/4` underestimates badly.
+/// - **Code**: shorter average token; `chars/4` underestimates.
+///
+/// For English prose at moderate length it lands within ~30% of real
+/// BPE. For ad-hoc gates, tests, and orientation it's fine. For real
+/// LLM context budgets, prefer `TiktokenTokenizer` (under the
+/// `tiktoken` feature).
+///
+/// [help.openai.com - tokens]: https://help.openai.com/en/articles/4936856-what-are-tokens-and-how-to-count-them
 pub struct CharCountTokenizer;
 
 /// Final-ordering strategy applied to bundle items right before the

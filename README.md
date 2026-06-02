@@ -116,10 +116,23 @@ Hansa protects against:
 
 Hansa does **not** protect against:
 
-- malicious key-holders (use v0.2's skipper keypair when it lands)
+- malicious key-holders (use M3's skipper keypair when it lands)
 - compromised keys (recovery is manual rotation)
 - network attackers (v0.1 is filesystem-local)
 - filesystem tampering (rely on OS ACLs)
+
+The full version, with the reasoning and the milestone that lifts each
+limit, is in [docs/threat-model.md](docs/threat-model.md).
+
+## Guides
+
+- [docs/plugin-guide.md](docs/plugin-guide.md) - the four traits hansa
+  lets you swap (`Registry`, `Keystore`, `Tokenizer`, `Ranker`) plus
+  the `peer_opener` seam.
+- [docs/deployment.md](docs/deployment.md) - layouts that work in v0.1,
+  saga freshness, the query budget knobs, sync vs async fan-out.
+- [docs/threat-model.md](docs/threat-model.md) - what one shared key
+  does and does not buy you.
 
 ## Roadmap
 
@@ -128,8 +141,8 @@ See [private/roadmap.md][roadmap]:
 | Milestone       | Status   | What it adds                                                                       |
 | --------------- | -------- | ---------------------------------------------------------------------------------- |
 | M1 Foundation   | **done** | join/leave/query end-to-end                                                        |
-| M2 Hardening    | next     | background saga refresh, threat-model docs                                         |
-| M3 Lifecycle    | future   | `TenantLifecycle`/`TenantInfo` in rigging, skipper keypair, selective revocation   |
+| M2 Hardening    | **done** | background saga refresh, threat-model/plugin/deployment docs                       |
+| M3 Lifecycle    | next     | `TenantLifecycle`/`TenantInfo` in rigging, skipper keypair, selective revocation   |
 | M4 Events       | future   | `TenantEvents` push notifications, pheromone trail                                 |
 | M5 Accounting   | future   | quotas, stats, searchable encryption                                               |
 | M6 Engine-ready | future   | network registry, spawn/seed/sign                                                  |

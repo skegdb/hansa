@@ -11,8 +11,10 @@
 //!   v0.2.
 //! - [`MemoryKeystore`] keeps keys in-process; intended for tests.
 //!
-//! Future implementations like `KeychainKeystore` (macOS) live in
-//! separate crates behind feature flags and are out of scope for v0.1.
+//! An OS-native `OsKeystore`, backed by the platform secret store
+//! (macOS Keychain, Linux Secret Service, Windows Credential Manager
+//! via the `keyring` crate), lands in M3 behind a feature flag. Out of
+//! scope for v0.1.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

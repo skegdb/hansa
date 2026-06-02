@@ -13,10 +13,10 @@
 //! absent here; the handle is already useful for orchestrators that
 //! want to spawn agents, discover peers, and serve their digests.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use skeg_rigging::{IterVectors, TenantId};
+use skeg_rigging::{CapabilityId, IterVectors, OpenError, TenantId, TenantInfo, TenantLifecycle};
 
 use skeg_rigging::QueryFiltered;
 
@@ -26,6 +26,85 @@ use crate::manifest::ManifestStore;
 use crate::membrane::{HitOrigin, MembraneHit, MembraneQuery, PeerOpener, TokenBudget};
 use crate::saga::build_saga_from_tenant;
 use crate::{HansaId, HansaKey, MemberRecord, Registry, Result, Saga};
+
+/// Capability a tenant exposes once it has joined a hansa: an
+/// orchestrator seeing this in [`TenantInfo::capabilities`] knows the
+/// tenant is a hansa member. Namespace convention per
+/// [`skeg_rigging::CapabilityId`].
+pub const CAP_HANSA_MEMBER: CapabilityId = CapabilityId("hansa.member");
+/// Capability a hansa member exposes when it can serve membrane
+/// queries to peers (i.e. a peer opener is configured). Absent on a
+/// local-only member.
+pub const CAP_HANSA_MEMBRANE: CapabilityId = CapabilityId("hansa.membrane");
+
+/// Discovery surface: a [`Hansa`] handle is itself a tenant from an
+/// orchestrator's point of view. It delegates id / dim / record count
+/// to the wrapped local tenant and extends the tenant's own
+/// capabilities with [`CAP_HANSA_MEMBER`] (always) and
+/// [`CAP_HANSA_MEMBRANE`] (when a peer opener is configured, so the
+/// member can serve cross-tenant queries).
+impl<T> TenantInfo for Hansa<T>
+where
+    T: TenantInfo + IterVectors + Send + Sync + 'static,
+{
+    fn tenant_id(&self) -> TenantId {
+        self.local_tenant_id
+    }
+
+    fn embedding_dim(&self) -> u32 {
+        TenantInfo::embedding_dim(&*self.local_tenant)
+    }
+
+    fn record_count(&self) -> u64 {
+        TenantInfo::record_count(&*self.local_tenant)
+    }
+
+    fn capabilities(&self) -> Vec<CapabilityId> {
+        let mut caps = self.local_tenant.capabilities();
+        caps.push(CAP_HANSA_MEMBER);
+        if self.peer_opener.is_some() {
+            caps.push(CAP_HANSA_MEMBRANE);
+        }
+        caps
+    }
+}
+
+/// Management surface for a hansa-wrapped tenant.
+///
+/// The scope is deliberately the *hansa layer*, not the wrapped
+/// tenant's data:
+///
+/// - [`Self::snapshot`] delegates to the wrapped tenant's own snapshot
+///   (its data) and copies the local saga digest alongside, so a
+///   backup taken through this handle carries the membrane digest.
+///   Membership lives in the shared registry — cluster state, not part
+///   of a per-tenant snapshot.
+/// - [`Self::destroy`] tears down hansa participation only (registry
+///   entry + saga file). The wrapped tenant is sovereign: it owns its
+///   data and its own [`TenantLifecycle`], and leaving a hansa must not
+///   delete the agent's memory. Destroy the underlying tenant through
+///   its own handle when that is actually intended.
+impl<T> TenantLifecycle for Hansa<T>
+where
+    T: TenantLifecycle + IterVectors + Send + Sync + 'static,
+{
+    fn snapshot(&self, dest: &Path) -> std::result::Result<(), OpenError> {
+        self.local_tenant.snapshot(dest)?;
+        let saga = self.local_saga_path();
+        if saga.exists() {
+            if !dest.exists() {
+                std::fs::create_dir_all(dest)?;
+            }
+            std::fs::copy(&saga, dest.join("hansa.saga"))?;
+        }
+        Ok(())
+    }
+
+    fn destroy(self: Box<Self>) -> std::result::Result<(), OpenError> {
+        self.leave()
+            .map_err(|e| OpenError::Io(std::io::Error::other(e.to_string())))
+    }
+}
 
 /// Inputs needed to open a [`Hansa`] handle.
 pub struct HansaConfig<T> {
@@ -398,6 +477,32 @@ mod tests {
         }
     }
 
+    impl TenantInfo for StubTenant {
+        fn tenant_id(&self) -> TenantId {
+            self.id
+        }
+        fn embedding_dim(&self) -> u32 {
+            self.dim
+        }
+        fn record_count(&self) -> u64 {
+            self.records.len() as u64
+        }
+        fn capabilities(&self) -> Vec<CapabilityId> {
+            vec![skeg_rigging::CAP_VECTOR_KV]
+        }
+    }
+
+    impl TenantLifecycle for StubTenant {
+        fn snapshot(&self, dest: &Path) -> std::result::Result<(), OpenError> {
+            std::fs::create_dir_all(dest)?;
+            std::fs::write(dest.join("tenant.stub"), b"stub")?;
+            Ok(())
+        }
+        fn destroy(self: Box<Self>) -> std::result::Result<(), OpenError> {
+            Ok(())
+        }
+    }
+
     fn open_handle(tmpdir: &Path, tenant_seed: u8) -> (Hansa<StubTenant>, HansaId) {
         let key = HansaKey::from_bytes([7; 32]);
         let id = key.hansa_id();
@@ -470,6 +575,51 @@ mod tests {
         h.leave().unwrap();
         assert_eq!(h.members().unwrap().len(), 0);
         assert!(!h.local_saga_path().exists());
+    }
+
+    #[test]
+    fn tenant_info_delegates_and_adds_hansa_member_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let (h, _) = open_handle(dir.path(), 5);
+        // Delegation to the wrapped tenant.
+        assert_eq!(TenantInfo::tenant_id(&h), TenantId::from_bytes([5; 16]));
+        assert_eq!(TenantInfo::embedding_dim(&h), 3);
+        assert_eq!(TenantInfo::record_count(&h), 20);
+        // Base cap preserved, hansa.member added. peer_opener is None
+        // in open_handle, so hansa.membrane must be absent.
+        let caps = TenantInfo::capabilities(&h);
+        assert!(caps.contains(&skeg_rigging::CAP_VECTOR_KV));
+        assert!(caps.contains(&CAP_HANSA_MEMBER));
+        assert!(!caps.contains(&CAP_HANSA_MEMBRANE));
+    }
+
+    #[test]
+    fn snapshot_captures_tenant_data_and_saga() {
+        let dir = tempfile::tempdir().unwrap();
+        let (h, _) = open_handle(dir.path(), 6);
+        h.join(Vec::<String>::new()).unwrap();
+        let dest = dir.path().join("backup");
+        TenantLifecycle::snapshot(&h, &dest).unwrap();
+        // Wrapped tenant's own snapshot ran.
+        assert!(dest.join("tenant.stub").exists());
+        // Hansa-layer saga digest copied alongside.
+        assert!(dest.join("hansa.saga").exists());
+    }
+
+    #[test]
+    fn destroy_leaves_hansa_without_touching_tenant() {
+        let dir = tempfile::tempdir().unwrap();
+        let (h, _) = open_handle(dir.path(), 7);
+        h.join(Vec::<String>::new()).unwrap();
+        assert_eq!(h.members().unwrap().len(), 1);
+        let saga = h.local_saga_path();
+        assert!(saga.exists());
+        Box::new(h).destroy().unwrap();
+        // Hansa participation gone: saga removed. Re-open a fresh handle
+        // against the same registry to confirm membership dropped.
+        let (h2, _) = open_handle(dir.path(), 7);
+        assert_eq!(h2.members().unwrap().len(), 0);
+        assert!(!saga.exists());
     }
 
     #[test]

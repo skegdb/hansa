@@ -54,7 +54,7 @@ pub use context::{
     TokenDensityRanker, Tokenizer,
 };
 pub use error::HansaError;
-pub use hansa::{Hansa, HansaConfig};
+pub use hansa::{CAP_HANSA_MEMBER, CAP_HANSA_MEMBRANE, Hansa, HansaConfig};
 pub use hybrid_registry::HybridRegistry;
 pub use key::{HansaId, HansaKey};
 pub use keystore::{EnvKeystore, FileKeystore, Keystore, MemoryKeystore};

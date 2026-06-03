@@ -44,6 +44,7 @@ pub mod member;
 pub mod membrane;
 pub mod registry;
 pub mod saga;
+pub mod sign;
 #[cfg(feature = "tiktoken")]
 pub mod tiktoken;
 
@@ -63,6 +64,7 @@ pub use member::MemberRecord;
 pub use membrane::{HitOrigin, MembraneHit, MembraneStats, PeerOpener, TokenBudget};
 pub use registry::{FileRegistry, Registry};
 pub use saga::Saga;
+pub use sign::{DOMAIN_GENESIS, DOMAIN_LINK, Sig, Skipper, SkipperPub};
 #[cfg(feature = "tiktoken")]
 pub use tiktoken::TiktokenTokenizer;
 

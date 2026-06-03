@@ -41,4 +41,32 @@ pub enum HansaError {
     /// Catch-all for invariant violations.
     #[error("invariant: {0}")]
     Invariant(String),
+
+    // ---- Crypto group (M3-security) ----
+    /// An ed25519 signature failed to verify.
+    #[error("signature verification failed")]
+    BadSignature,
+    /// A public key is a weak / small-order ed25519 key and was rejected.
+    #[error("weak ed25519 key rejected")]
+    WeakKey,
+    /// Malformed ed25519 public key or signature bytes.
+    #[error("malformed key or signature: {0}")]
+    MalformedCrypto(String),
+    /// `members.log` chain integrity broken at a sequence number
+    /// (bad `prev` hash, non-monotonic `seq`, or unverifiable link).
+    #[error("members.log chain broken at seq {seq}")]
+    ChainBroken {
+        /// Sequence number of the offending link.
+        seq: u64,
+    },
+    /// A replayed log head regressed below the locally cached head:
+    /// a rollback against a returning member (see m3-security design §7).
+    #[error("members.log head regressed (rollback detected)")]
+    ChainRegressed,
+    /// The genesis skipper key does not match the pinned `HansaId`.
+    #[error("skipper key does not match hansa id")]
+    IdMismatch,
+    /// A link was signed by a key not authorised for this hansa.
+    #[error("unauthorized signer")]
+    Unauthorized,
 }

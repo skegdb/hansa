@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -33,6 +33,7 @@ fs2 = "0.4"
 rayon = "1"
 parking_lot = "0.12"
 rand = "0.9"
+ed25519-dalek = { version = "2", features = ["zeroize"] }
 
 [workspace.lints.clippy]
 uninlined_format_args = "allow"

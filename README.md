@@ -70,24 +70,31 @@ race conditions.
 use std::sync::Arc;
 use hansa::prelude::*;
 use skeg_rigging::TenantId;
+use skeg_rigging_net::TenantLocation;
 use skeg_rigging_skeg::Tenant;
 
 let key = HansaKey::generate();
+let skipper = Skipper::generate(); // the signing authority that founds the hansa
 let tenant = Arc::new(Tenant::open("/path/to/vault", TenantId::ZERO, 768)?);
 
 let h = Hansa::open(HansaConfig {
     key,
+    skipper: Some(skipper), // hold it to found and admit/revoke; None = read-only member
+    hansa_id: None,         // derived from the skipper; a joiner passes Some(id) instead
     registry: Arc::new(FileRegistry::default_root()),
     local_tenant: tenant.clone(),
     local_tenant_id: TenantId::ZERO,
-    local_tenant_path: "/path/to/vault".into(),
+    local_tenant_location: TenantLocation::Path { path: "/path/to/vault".into() },
     saga_dir: "/home/me/.hansa/<id>/sagas".into(),
-    peer_opener: Some(Arc::new(skeg_rigging_skeg::open_readonly)),
+    peer_opener: Some(Arc::new(|_id, loc: &TenantLocation| match loc {
+        TenantLocation::Path { path } => skeg_rigging_skeg::open_readonly(path),
+        _ => Err(skeg_rigging::OpenError::NotFound),
+    })),
     default_budget: TokenBudget::default(),
+    head_cache_dir: None,   // Some(dir) enables anti-rollback
 })?;
 
-h.join(/* tags */ Vec::<String>::new())?;
-h.refresh_saga(Vec::<String>::new(), /* built_at */ 1, /* seed */ 7)?;
+h.join(/* tags */ Vec::<String>::new())?; // the skipper admits the local tenant
 
 let hits = h
     .query(&query_embedding)?
@@ -106,20 +113,30 @@ let hits = h
   lock                 # advisory lock for compaction
 ```
 
-## Trust model (v0.1)
+## Trust model (v0.2)
+
+Membership is a **skipper-signed, hash-chained log**. A hansa is founded
+with an ed25519 keypair (the skipper); the id commits to the skipper key,
+so knowing the id pins it. Every admit and revoke is a signed link, and a
+member is trusted only if a signature vouches for it — verified on replay,
+not taken on faith from the filesystem.
 
 Hansa protects against:
 
-- accidental cross-hansa leakage (records scoped by key)
-- accidental cross-tenant leakage (records not marked `shareable` never cross)
+- accidental cross-hansa / cross-tenant leakage (records scoped by key;
+  `shareable: false` never crosses)
 - outsiders without the key (HansaId alone grants nothing)
+- forged or evicted membership (only the skipper can admit/revoke; a
+  rewritten or reordered log fails replay)
+- rollback against a returning member (opt-in head cache)
 
 Hansa does **not** protect against:
 
-- malicious key-holders (use M3's skipper keypair when it lands)
-- compromised keys (recovery is manual rotation)
-- network attackers (v0.1 is filesystem-local)
-- filesystem tampering (rely on OS ACLs)
+- a compromised **skipper** key (recovery is founding a new hansa)
+- malicious key-holders reading what was marked `shareable`
+- network attackers (v0.2 is filesystem-local)
+- filesystem tampering as a denial-of-service (integrity is detected,
+  availability is an OS-permissions / backup concern)
 
 The full version, with the reasoning and the milestone that lifts each
 limit, is in [docs/threat-model.md](docs/threat-model.md).
@@ -142,8 +159,8 @@ See [private/roadmap.md][roadmap]:
 | --------------- | -------- | ---------------------------------------------------------------------------------- |
 | M1 Foundation   | **done** | join/leave/query end-to-end                                                        |
 | M2 Hardening    | **done** | background saga refresh, threat-model/plugin/deployment docs                       |
-| M3 Lifecycle    | next     | `TenantLifecycle`/`TenantInfo` in rigging, skipper keypair, selective revocation   |
-| M4 Events       | future   | `TenantEvents` push notifications, pheromone trail                                 |
+| M3 Lifecycle    | **done** | `TenantLifecycle`/`TenantInfo` on Hansa, skipper-signed roster, revocation         |
+| M4 Events       | next     | `TenantEvents` push notifications, pheromone trail                                 |
 | M5 Accounting   | future   | quotas, stats, searchable encryption                                               |
 | M6 Engine-ready | future   | network registry, spawn/seed/sign                                                  |
 

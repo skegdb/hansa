@@ -53,6 +53,24 @@ impl Skipper {
         Self { signing }
     }
 
+    /// Derive a skipper deterministically from a [`crate::HansaKey`].
+    ///
+    /// Convenience for the local single-user model: the key-holder is
+    /// the skipper, so the one shared secret grants both reading and
+    /// membership control. This deliberately trades away the
+    /// key/authority separation — anyone holding the key can sign — for
+    /// zero extra key distribution, which suits one user with several
+    /// agents on one machine. For true asymmetric trust (the key lets
+    /// you read but not change membership), generate an independent
+    /// [`Skipper::generate`] and distribute its secret separately.
+    pub fn from_hansa_key(key: &crate::HansaKey) -> Self {
+        let mut h = blake3::Hasher::new_derive_key("hansa.skipper.from-key.v1");
+        h.update(key.raw());
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(h.finalize().as_bytes());
+        Self::from_seed(seed)
+    }
+
     /// The 32-byte secret seed, for storage in a keystore. Handle with
     /// the same care as a [`crate::HansaKey`]; zeroize the copy when
     /// done.

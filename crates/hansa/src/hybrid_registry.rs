@@ -28,6 +28,8 @@ use parking_lot::RwLock;
 use skeg_rigging::TenantId;
 use skeg_rigging_net_http::{SagaClient, fetch_to_path};
 
+use crate::chain::{Body, Link};
+use crate::sign::Skipper;
 use crate::{FileRegistry, HansaError, HansaId, MemberRecord, Registry, Result};
 
 /// Local-plus-remote member registry.
@@ -172,15 +174,32 @@ fn parse_tenant_hex(hex: &str) -> Option<TenantId> {
 }
 
 impl Registry for HybridRegistry {
-    fn join(&self, hansa: HansaId, member: MemberRecord) -> Result<()> {
-        self.local.join(hansa, member)
+    fn append_link(&self, hansa: HansaId, link: &Link) -> Result<()> {
+        self.local.append_link(hansa, link)
     }
 
-    fn leave(&self, hansa: HansaId, tenant: TenantId) -> Result<()> {
-        self.local.leave(hansa, tenant)
+    fn read_chain(&self, hansa: HansaId) -> Result<Vec<Link>> {
+        self.local.read_chain(hansa)
+    }
+
+    fn found(
+        &self,
+        hansa: HansaId,
+        skipper: &Skipper,
+        embedding_dim: u32,
+        created_at: i64,
+    ) -> Result<()> {
+        self.local.found(hansa, skipper, embedding_dim, created_at)
+    }
+
+    fn append_next(&self, hansa: HansaId, skipper: &Skipper, body: Body) -> Result<()> {
+        self.local.append_next(hansa, skipper, body)
     }
 
     fn members(&self, hansa: HansaId) -> Result<Vec<MemberRecord>> {
+        // Local members come from the verified chain; remotes are merged
+        // best-effort for cross-machine discovery (not chain-verified
+        // here — that hardening is future work).
         let mut all = self.local.members(hansa)?;
         let remotes_snapshot: Vec<_> = self
             .remotes

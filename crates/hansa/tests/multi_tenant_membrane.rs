@@ -80,13 +80,16 @@ fn spawn_agent(
     tenant.flush().unwrap();
 
     let key = HansaKey::from_bytes([42; 32]);
-    let hid = key.hansa_id();
+    let skipper = Skipper::from_seed([42; 32]);
+    let hid = HansaId::from_skipper(&skipper.public());
     let registry = Arc::new(FileRegistry::new(root_dir));
     let saga_dir = root_dir.join(hid.as_hex()).join("sagas");
     let tenant_dir: PathBuf = root.tenant_dir(tid);
     let rigging_tid = skeg_multi_tenant::rigging_tenant_id(tid);
     let hansa = Hansa::open(HansaConfig {
         key,
+        skipper: Some(skipper),
+        hansa_id: Some(hid),
         registry,
         local_tenant: tenant.clone(),
         local_tenant_id: rigging_tid,
@@ -213,7 +216,8 @@ fn quota_capped_tenant_blocks_membrane_writes() {
     // The capped tenant is still queryable through hansa (read path
     // doesn't go through the quota gate).
     let key = HansaKey::from_bytes([99; 32]);
-    let hid = key.hansa_id();
+    let skipper = Skipper::from_seed([99; 32]);
+    let hid = HansaId::from_skipper(&skipper.public());
     let registry = Arc::new(FileRegistry::new(dir.path()));
     let saga_dir = dir.path().join(hid.as_hex()).join("sagas");
     let tenant_dir = root.tenant_dir(tid);
@@ -221,6 +225,8 @@ fn quota_capped_tenant_blocks_membrane_writes() {
     let rigging_tid = skeg_multi_tenant::rigging_tenant_id(tid);
     let hansa = Hansa::open(HansaConfig {
         key,
+        skipper: Some(skipper),
+        hansa_id: Some(hid),
         registry,
         local_tenant: local,
         local_tenant_id: rigging_tid,

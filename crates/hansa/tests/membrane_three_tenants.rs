@@ -78,11 +78,14 @@ fn spawn_agent(root: &std::path::Path, label: u8, unit_at: usize, shareable_coun
     tenant.flush().unwrap();
 
     let key = HansaKey::from_bytes([42; 32]);
-    let hid = key.hansa_id();
+    let skipper = Skipper::from_seed([42; 32]);
+    let hid = HansaId::from_skipper(&skipper.public());
     let registry = Arc::new(FileRegistry::new(root));
     let saga_dir = root.join(hid.as_hex()).join("sagas");
     let hansa = Hansa::open(HansaConfig {
         key,
+        skipper: Some(skipper),
+        hansa_id: Some(hid),
         registry,
         local_tenant: tenant.clone(),
         local_tenant_id: tenant_id,

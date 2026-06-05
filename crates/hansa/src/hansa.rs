@@ -22,10 +22,12 @@ use skeg_rigging::QueryFiltered;
 
 use skeg_rigging_net::TenantLocation;
 
+use crate::chain::{Body, replay};
 use crate::manifest::ManifestStore;
 use crate::membrane::{HitOrigin, MembraneHit, MembraneQuery, PeerOpener, TokenBudget};
 use crate::saga::build_saga_from_tenant;
-use crate::{HansaId, HansaKey, MemberRecord, Registry, Result, Saga};
+use crate::sign::Skipper;
+use crate::{HansaError, HansaId, HansaKey, MemberRecord, Registry, Result, Saga};
 
 /// Capability a tenant exposes once it has joined a hansa: an
 /// orchestrator seeing this in [`TenantInfo::capabilities`] knows the
@@ -108,8 +110,20 @@ where
 
 /// Inputs needed to open a [`Hansa`] handle.
 pub struct HansaConfig<T> {
-    /// Trust group key.
+    /// Trust group key. Scopes confidentiality / discovery; no longer
+    /// derives the hansa id (that now commits to the skipper).
     pub key: HansaKey,
+    /// The signing authority for this hansa.
+    ///
+    /// `Some` when this process founds the hansa or admits/revokes
+    /// members (it holds the skipper secret). `None` for a read-only
+    /// member that only queries and verifies — it cannot change
+    /// membership.
+    pub skipper: Option<Skipper>,
+    /// The hansa id. Required for a read-only member (the id it was
+    /// given out-of-band). For a founder it is optional and, if given,
+    /// must equal `HansaId::from_skipper(skipper)`.
+    pub hansa_id: Option<HansaId>,
     /// Registry used for member discovery (typically [`crate::FileRegistry`]).
     pub registry: Arc<dyn Registry>,
     /// Local tenant. Must implement [`IterVectors`] for saga refresh.
@@ -147,6 +161,9 @@ pub struct HansaConfig<T> {
 pub struct Hansa<T> {
     id: HansaId,
     key: HansaKey,
+    /// Signing authority, when this process holds it. Required to
+    /// admit / revoke members; `None` for a read-only member.
+    skipper: Option<Skipper>,
     registry: Arc<dyn Registry>,
     local_tenant: Arc<T>,
     local_tenant_id: TenantId,
@@ -168,9 +185,54 @@ where
     T: IterVectors + Send + Sync + 'static,
 {
     /// Construct the handle. Creates the saga directory if missing.
+    ///
+    /// Founds the hansa (writes a signed genesis) when the log is empty
+    /// and a skipper is held; otherwise verifies that the existing chain
+    /// is well-formed and bound to this id. A read-only member (no
+    /// skipper) cannot found and must point at an already-founded hansa.
     pub fn open(config: HansaConfig<T>) -> Result<Self> {
         std::fs::create_dir_all(&config.saga_dir)?;
-        let id = config.key.hansa_id();
+
+        // Resolve the id: derived from the skipper for a founder, or the
+        // out-of-band id for a read-only member.
+        let id = match (&config.skipper, config.hansa_id) {
+            (Some(sk), provided) => {
+                let derived = HansaId::from_skipper(&sk.public());
+                if let Some(p) = provided
+                    && p != derived
+                {
+                    return Err(HansaError::IdMismatch);
+                }
+                derived
+            }
+            (None, Some(id)) => id,
+            (None, None) => {
+                return Err(HansaError::Invariant(
+                    "hansa: need a skipper to found, or a hansa_id to join".into(),
+                ));
+            }
+        };
+
+        // Found (idempotent, locked) when we hold the skipper, else
+        // require an already-founded chain. Then verify.
+        match &config.skipper {
+            Some(sk) => {
+                let dim = config.local_tenant.embedding_dim();
+                config
+                    .registry
+                    .found(id, sk, dim, current_unix_seconds())?;
+            }
+            None => {
+                if config.registry.read_chain(id)?.is_empty() {
+                    return Err(HansaError::Invariant(
+                        "hansa not founded and no skipper to found it".into(),
+                    ));
+                }
+            }
+        }
+        // Verifies signatures, hash chain, and the id<->skipper binding.
+        replay(&config.registry.read_chain(id)?, Some(id))?;
+
         // Manifests live alongside the saga store under a sibling
         // `manifests/` dir. Derived rather than configured so the
         // typical caller doesn't have to plumb a second path.
@@ -183,6 +245,7 @@ where
         Ok(Self {
             id,
             key: config.key,
+            skipper: config.skipper,
             registry: config.registry,
             local_tenant: config.local_tenant,
             local_tenant_id: config.local_tenant_id,
@@ -266,26 +329,63 @@ where
         if !self.local_saga_path().exists() {
             self.refresh_saga(tags, current_unix_seconds(), 0)?;
         }
-        let now = current_unix_seconds();
         let dim = self.local_tenant.embedding_dim();
         let record = MemberRecord {
             tenant_id: self.local_tenant_id,
             tenant_location: self.local_tenant_location.clone(),
             embedding_dim: dim,
-            joined_at: now,
+            joined_at: current_unix_seconds(),
         };
-        self.registry.join(self.id, record)
+        self.admit(record)
     }
 
-    /// Remove this member from the registry and delete its saga file
-    /// (privacy default - see §11.2 design doc).
+    /// Admit a member: the skipper signs an `Admit` link and appends it
+    /// to the chain. Skipper-only ([`HansaError::Unauthorized`] without
+    /// one). The member's embedding dim must match the genesis.
+    pub fn admit(&self, member: MemberRecord) -> Result<()> {
+        let skipper = self.skipper.as_ref().ok_or(HansaError::Unauthorized)?;
+        let head = replay(&self.registry.read_chain(self.id)?, Some(self.id))?;
+        if member.embedding_dim != head.genesis.embedding_dim {
+            return Err(HansaError::DimMismatch {
+                existing: head.genesis.embedding_dim,
+                joining: member.embedding_dim,
+            });
+        }
+        self.registry.append_next(
+            self.id,
+            skipper,
+            Body::Admit {
+                member,
+                member_pub: None,
+            },
+        )
+    }
+
+    /// Remove this member: revoke its own tenant and delete its local
+    /// saga file (privacy default).
     pub fn leave(&self) -> Result<()> {
-        self.registry.leave(self.id, self.local_tenant_id)?;
+        self.revoke(self.local_tenant_id)?;
         let path = self.local_saga_path();
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
         Ok(())
+    }
+
+    /// Revoke a member by tenant id: the skipper signs a `Revoke` link.
+    /// Skipper-only. The revoked tenant drops from the active set on the
+    /// next replay, so honest peers stop serving it immediately.
+    pub fn revoke(&self, tenant: TenantId) -> Result<()> {
+        let skipper = self.skipper.as_ref().ok_or(HansaError::Unauthorized)?;
+        self.registry.append_next(
+            self.id,
+            skipper,
+            Body::Revoke {
+                tenant_id: tenant,
+                at: current_unix_seconds(),
+                reason: None,
+            },
+        )
     }
 
     /// All currently-active members of this hansa.
@@ -505,7 +605,10 @@ mod tests {
 
     fn open_handle(tmpdir: &Path, tenant_seed: u8) -> (Hansa<StubTenant>, HansaId) {
         let key = HansaKey::from_bytes([7; 32]);
-        let id = key.hansa_id();
+        // Deterministic skipper so reopening the same tempdir resolves to
+        // the same hansa id (and the same founded chain).
+        let skipper = Skipper::from_seed([7u8; 32]);
+        let id = HansaId::from_skipper(&skipper.public());
         let saga_dir = tmpdir.join(id.as_hex()).join("sagas");
         let registry = Arc::new(FileRegistry::new(tmpdir));
         let tenant = Arc::new(StubTenant {
@@ -520,6 +623,8 @@ mod tests {
         });
         let handle = Hansa::open(HansaConfig {
             key: key.clone(),
+            skipper: Some(skipper),
+            hansa_id: Some(id),
             registry,
             local_tenant: tenant.clone(),
             local_tenant_id: tenant.id,

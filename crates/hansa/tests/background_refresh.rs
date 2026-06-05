@@ -50,10 +50,13 @@ fn background_task_rebuilds_saga_after_growth() {
     tenant.flush().unwrap();
 
     let key = HansaKey::from_bytes([7; 32]);
-    let hid = key.hansa_id();
+    let skipper = Skipper::from_seed([7; 32]);
+    let hid = HansaId::from_skipper(&skipper.public());
     let saga_dir = root.join(hid.as_hex()).join("sagas");
     let handle = Hansa::open(HansaConfig {
         key,
+        skipper: Some(skipper),
+        hansa_id: Some(hid),
         registry: Arc::new(FileRegistry::new(root)),
         local_tenant: tenant.clone(),
         local_tenant_id: tenant_id,

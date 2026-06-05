@@ -4,7 +4,11 @@ members = [
     "examples/three-agents",
     "examples/hansa-agent",
     "examples/bench-report",
-    "examples/hybrid-demo",
+    # hybrid-demo is temporarily out of the workspace: it demonstrates
+    # cross-machine member merge over HTTP, which relied on the old
+    # members.snap and needs reworking for the signed chain (network
+    # registry work). Source kept for that rework.
+    # "examples/hybrid-demo",
 ]
 resolver = "2"
 

@@ -81,6 +81,6 @@ pub mod prelude {
         ContextItem, EnvKeystore, FileKeystore, FileRegistry, Hansa, HansaConfig, HansaError,
         HansaId, HansaKey, HitOrigin, Keystore, ManifestStore, MemberRecord, MembraneHit,
         MembraneStats, MemoryKeystore, PeerManifest, PeerOpener, Ranker, RefreshHandle, Registry,
-        Result, Saga, SimilarityRanker, TokenBudget, TokenDensityRanker, Tokenizer,
+        Result, Saga, SimilarityRanker, Skipper, TokenBudget, TokenDensityRanker, Tokenizer,
     };
 }

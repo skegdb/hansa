@@ -1,6 +1,6 @@
 # Deployment patterns
 
-v0.1 targets one machine, one user, several agent processes. Within
+v0.2 targets one machine, one user, several agent processes. Within
 that envelope these are the layouts that work and the knobs that
 matter.
 
@@ -71,14 +71,16 @@ enable the `tokio` feature and use `Hansa::query_async`, which spawns
 peer queries as Tokio tasks instead and integrates with your existing
 runtime rather than standing up a second thread pool beside it.
 
-## What v0.1 is not for
+## What v0.2 is not for
 
-- **Multiple humans.** No per-user boundary inside a hansa. One hansa
-  is one trust domain.
+- **Multiple humans sharing read access.** A key-holder still reads
+  everything marked `shareable`. Membership is now skipper-controlled,
+  but the `HansaKey` is not a per-user read boundary.
 - **Cross-machine.** The registry and sagas are filesystem paths. A
   networked registry is M6.
-- **Untrusted peers.** Every key-holder is a trusted equal until the
-  M3 skipper keypair adds asymmetric trust and revocation.
+- **An untrusted skipper.** The skipper is the root of trust; a
+  compromised skipper key compromises the hansa (no in-band rotation
+  yet).
 
 If your deployment needs any of those, the shape changes — track the
 relevant milestone in [the roadmap](../private/roadmap.md) rather than

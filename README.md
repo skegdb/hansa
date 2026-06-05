@@ -15,28 +15,31 @@ routes when it serves them. **Not** a distributed database, **not** a
 synchronization protocol, **not** a hive mind. A discovery + access
 mechanism with explicit cost accounting.
 
-## v0.1 - M1 Foundation
+## What's in 0.2.0
 
 A single user, several agent processes on one machine, filesystem-local
-discovery. The trust model is shared secret: anyone with the key is a
-trusted equal.
+discovery — with a **signed membership roster** (see [Trust](#trust-model-v02)).
 
 - [`HansaKey`] (32-byte secret, zeroized on drop, BLAKE3-KDF from passphrase)
-- [`HansaId`] (`blake3(key || "hansa-id-v1")`, public)
+- [`Skipper`] (ed25519 signing authority); [`HansaId`] commits to it
 - Three [`Keystore`] impls: [`EnvKeystore`], [`FileKeystore`], [`MemoryKeystore`]
-- [`FileRegistry`]: append-only `members.log` + advisory-lock compaction
+- [`FileRegistry`]: skipper-signed, hash-chained `members.log` with signed
+  checkpoint compaction; replay verifies every link
+- Selective revocation enforced at the membrane; opt-in anti-rollback
+  head cache; `migrate_v1` for old unsigned hansas
 - [`Saga`]: condensed memory digest (k-means++ over a reservoir sample, top-N tag aggregate)
   persisted via [`skeg-hull`](https://github.com/skegdb/skeg-hull) SagaV1
 - Membrane query path: local query + saga-scored peer fan-out under
   [`TokenBudget`] cap, parallel via `rayon`, `shareable` filter at the source
 - Hit set carries [`HitOrigin`] (Local vs `Remote { tenant_id }`)
+- `TenantInfo` / `TenantLifecycle` on `Hansa`, with `hansa.member` /
+  `hansa.membrane` capabilities
 - Peer failure (offline, locked, corrupt) → log + skip, never aborts the query
 
-Out of scope for v0.1: distributed consistency, cross-machine
-federation, selective revocation, provenance signing, confidentiality
-against malicious key-holders. See [private/hansa.md][hansa-design]
-§1.2 for the full list; [private/roadmap.md][roadmap] for what M2-M6
-add.
+Out of scope for 0.2.0: distributed consistency, cross-machine
+federation, per-record provenance signing, in-band skipper rotation,
+confidentiality against malicious key-holders reading shared records.
+See [private/roadmap.md][roadmap] for what M4-M6 add.
 
 ## Walkthrough - three agents
 
@@ -146,7 +149,7 @@ limit, is in [docs/threat-model.md](docs/threat-model.md).
 - [docs/plugin-guide.md](docs/plugin-guide.md) - the four traits hansa
   lets you swap (`Registry`, `Keystore`, `Tokenizer`, `Ranker`) plus
   the `peer_opener` seam.
-- [docs/deployment.md](docs/deployment.md) - layouts that work in v0.1,
+- [docs/deployment.md](docs/deployment.md) - layouts that work in v0.2,
   saga freshness, the query budget knobs, sync vs async fan-out.
 - [docs/threat-model.md](docs/threat-model.md) - what one shared key
   does and does not buy you.
@@ -212,7 +215,6 @@ commit message; see §3 of that doc.
 
 Apache-2.0.
 
-[hansa-design]: ./private/hansa.md
 [features]: ./private/features.md
 [token-eff]: ./private/design-token-efficiency.md
 [op-eff]: ./private/design-operational-efficiency.md

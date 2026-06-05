@@ -48,8 +48,10 @@ pub trait Keystore: Send + Sync {
 Shipped: `EnvKeystore` (reads `HANSA_KEY_<SLOT>`, write/remove are
 no-ops), `FileKeystore`, `MemoryKeystore` (tests). An OS-native
 keystore backed by the platform secret store — macOS Keychain, Linux
-Secret Service, Windows Credential Manager — lands in M3 behind a
-feature flag.
+Secret Service, Windows Credential Manager — is planned behind an
+`os-keystore` feature; until then store the skipper secret with
+`FileKeystore` (passphrase-encrypted) or derive it from the shared key
+with `Skipper::from_hansa_key`.
 
 ## Tokenizer
 

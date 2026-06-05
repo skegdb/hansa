@@ -196,6 +196,10 @@ impl Registry for HybridRegistry {
         self.local.append_next(hansa, skipper, body)
     }
 
+    fn compact(&self, hansa: HansaId, skipper: &Skipper) -> Result<()> {
+        self.local.compact(hansa, skipper)
+    }
+
     fn members(&self, hansa: HansaId) -> Result<Vec<MemberRecord>> {
         // Local members come from the verified chain; remotes are merged
         // best-effort for cross-machine discovery (not chain-verified

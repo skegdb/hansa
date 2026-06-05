@@ -51,6 +51,12 @@ pub trait Registry: Send + Sync {
     /// chain. The chain is replayed (and verified) before extension.
     fn append_next(&self, hansa: HansaId, skipper: &Skipper, body: Body) -> Result<()>;
 
+    /// Collapse the chain into a single signed checkpoint carrying the
+    /// active set, truncating the log. Skipper-only and locked. A
+    /// replayer trusts the compacted state by the checkpoint signature,
+    /// so this is not an unsigned rewrite.
+    fn compact(&self, hansa: HansaId, skipper: &Skipper) -> Result<()>;
+
     /// The currently-active members, by replaying and verifying the
     /// chain. An empty (un-founded) chain yields no members.
     fn members(&self, hansa: HansaId) -> Result<Vec<MemberRecord>> {
@@ -116,6 +122,52 @@ impl FileRegistry {
         let _ = FileExt::unlock(&lock);
         r
     }
+
+    /// Replace the whole log atomically (temp file + rename).
+    fn write_chain_atomic(&self, hansa: HansaId, links: &[Link]) -> Result<()> {
+        let path = self.log_path(hansa);
+        let tmp = path.with_extension("log.tmp");
+        let mut buf = String::new();
+        for link in links {
+            buf.push_str(&serde_json::to_string(link)?);
+            buf.push('\n');
+        }
+        std::fs::write(&tmp, buf.as_bytes())?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+    /// Collapse the chain to one signed checkpoint. Assumes the lock is
+    /// already held.
+    fn checkpoint_locked(&self, hansa: HansaId, skipper: &Skipper) -> Result<()> {
+        let chain = self.read_chain(hansa)?;
+        if chain.len() <= 1 {
+            return Ok(()); // nothing but a root to compact
+        }
+        let out = replay(&chain, None)?;
+        let checkpoint = Link::signed(
+            skipper,
+            out.head_seq + 1,
+            out.head_hash,
+            Body::Checkpoint {
+                members: out.active,
+                embedding_dim: out.embedding_dim,
+                at: now_unix_seconds(),
+            },
+        );
+        self.write_chain_atomic(hansa, &[checkpoint])
+    }
+}
+
+/// Once a chain exceeds this many links, `append_next` collapses it to a
+/// signed checkpoint.
+const CHECKPOINT_AFTER_LINKS: usize = 256;
+
+fn now_unix_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 impl Registry for FileRegistry {
@@ -173,7 +225,18 @@ impl Registry for FileRegistry {
             let chain = self.read_chain(hansa)?;
             let head = replay(&chain, None)?;
             let link = Link::signed(skipper, head.head_seq + 1, head.head_hash, body);
-            self.append_link(hansa, &link)
+            self.append_link(hansa, &link)?;
+            // Keep the log bounded: once it grows past the threshold,
+            // collapse it to a signed checkpoint (we already hold the
+            // lock, so call the core directly).
+            if chain.len() + 1 > CHECKPOINT_AFTER_LINKS {
+                self.checkpoint_locked(hansa, skipper)?;
+            }
+            Ok(())
         })
+    }
+
+    fn compact(&self, hansa: HansaId, skipper: &Skipper) -> Result<()> {
+        self.with_lock(hansa, || self.checkpoint_locked(hansa, skipper))
     }
 }

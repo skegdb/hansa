@@ -50,6 +50,18 @@ pub enum Body {
         #[serde(default)]
         reason: Option<String>,
     },
+    /// A compaction checkpoint: the materialized active set at a point in
+    /// the chain, skipper-signed, so replay can start here instead of
+    /// re-walking from genesis. Carries `embedding_dim` because the
+    /// genesis it replaces is gone after compaction.
+    Checkpoint {
+        /// Active members at the checkpoint, sorted by tenant id.
+        members: Vec<MemberRecord>,
+        /// Embedding dimension pinned for the hansa.
+        embedding_dim: u32,
+        /// Unix seconds of the checkpoint.
+        at: i64,
+    },
 }
 
 impl Body {
@@ -73,6 +85,21 @@ impl Body {
                     None => w.u8(0),
                     Some(r) => w.u8(1).str(r),
                 }
+            }
+            Body::Checkpoint {
+                members,
+                embedding_dim,
+                at,
+            } => {
+                let mut w = w
+                    .u8(3)
+                    .u32(*embedding_dim)
+                    .i64(*at)
+                    .u32(members.len() as u32);
+                for m in members {
+                    w = w.bytes(&m.canonical());
+                }
+                w
             }
         }
     }
@@ -140,8 +167,11 @@ impl Link {
 /// Result of a successful replay.
 #[derive(Debug, Clone)]
 pub struct ReplayOutcome {
-    /// The verified genesis.
-    pub genesis: Genesis,
+    /// The skipper key that roots this chain (from the genesis, or the
+    /// checkpoint that replaced it).
+    pub skipper: SkipperPub,
+    /// Embedding dimension pinned for the hansa.
+    pub embedding_dim: u32,
     /// Active members, sorted by tenant id.
     pub active: Vec<MemberRecord>,
     /// Sequence number of the last link.
@@ -152,33 +182,56 @@ pub struct ReplayOutcome {
 
 /// Replay and verify a chain into its active member set.
 ///
-/// `expected_id`, when given, additionally pins the genesis to the id
-/// the caller meant to join (the out-of-band fingerprint check).
+/// The chain starts with a genesis, or — after compaction — with a
+/// signed checkpoint that carries the active set. `expected_id`, when
+/// given, pins the root to the id the caller meant to join.
 pub fn replay(links: &[Link], expected_id: Option<HansaId>) -> Result<ReplayOutcome> {
     let first = links.first().ok_or(HansaError::ChainBroken { seq: 0 })?;
-    let Body::Genesis(g) = &first.body else {
-        return Err(HansaError::ChainBroken { seq: 0 });
-    };
-    if first.seq != 0 || first.prev != [0u8; 32] || first.signed_by != g.skipper_pub {
-        return Err(HansaError::ChainBroken { seq: 0 });
-    }
-    // Genesis is self-signed under its own domain; this also checks the
-    // id<->skipper binding (and the expected id, if supplied).
-    match expected_id {
-        Some(id) => g.verify_for(id, &first.sig)?,
-        None => g.verify(&first.sig)?,
-    }
 
-    let skipper = g.skipper_pub;
-    let mut active: HashMap<TenantId, MemberRecord> = HashMap::new();
+    let (skipper, embedding_dim, mut active, mut prev_seq) = match &first.body {
+        Body::Genesis(g) => {
+            if first.seq != 0 || first.prev != [0u8; 32] || first.signed_by != g.skipper_pub {
+                return Err(HansaError::ChainBroken { seq: 0 });
+            }
+            // Self-signed under the genesis domain; also checks the
+            // id<->skipper binding (and the expected id, if supplied).
+            match expected_id {
+                Some(id) => g.verify_for(id, &first.sig)?,
+                None => g.verify(&first.sig)?,
+            }
+            (g.skipper_pub, g.embedding_dim, HashMap::new(), 0u64)
+        }
+        Body::Checkpoint {
+            members,
+            embedding_dim,
+            ..
+        } => {
+            if let Some(id) = expected_id
+                && HansaId::from_skipper(&first.signed_by) != id
+            {
+                return Err(HansaError::IdMismatch);
+            }
+            first
+                .signed_by
+                .verify(DOMAIN_LINK, &first.canonical(), &first.sig)
+                .map_err(|_| HansaError::ChainBroken { seq: first.seq })?;
+            let mut map: HashMap<TenantId, MemberRecord> = HashMap::new();
+            for m in members {
+                map.insert(m.tenant_id, m.clone());
+            }
+            (first.signed_by, *embedding_dim, map, first.seq)
+        }
+        _ => return Err(HansaError::ChainBroken { seq: 0 }),
+    };
+
+    let skipper_pub = skipper;
     let mut prev_hash = first.hash();
-    let mut prev_seq = 0u64;
 
     for link in &links[1..] {
         if link.seq != prev_seq + 1 || link.prev != prev_hash {
             return Err(HansaError::ChainBroken { seq: link.seq });
         }
-        if link.signed_by != skipper {
+        if link.signed_by != skipper_pub {
             return Err(HansaError::Unauthorized);
         }
         link.signed_by
@@ -186,7 +239,9 @@ pub fn replay(links: &[Link], expected_id: Option<HansaId>) -> Result<ReplayOutc
             .map_err(|_| HansaError::ChainBroken { seq: link.seq })?;
 
         match &link.body {
-            Body::Genesis(_) => return Err(HansaError::ChainBroken { seq: link.seq }),
+            Body::Genesis(_) | Body::Checkpoint { .. } => {
+                return Err(HansaError::ChainBroken { seq: link.seq });
+            }
             Body::Admit { member, .. } => {
                 active.insert(member.tenant_id, member.clone());
             }
@@ -201,7 +256,8 @@ pub fn replay(links: &[Link], expected_id: Option<HansaId>) -> Result<ReplayOutc
     let mut active: Vec<MemberRecord> = active.into_values().collect();
     active.sort_by(|a, b| a.tenant_id.0.cmp(&b.tenant_id.0));
     Ok(ReplayOutcome {
-        genesis: g.clone(),
+        skipper: skipper_pub,
+        embedding_dim,
         active,
         head_seq: prev_seq,
         head_hash: prev_hash,

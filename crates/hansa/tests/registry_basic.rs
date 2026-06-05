@@ -111,6 +111,84 @@ fn tampered_log_line_is_rejected_on_replay() {
 }
 
 #[test]
+fn compact_collapses_log_and_preserves_members() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = FileRegistry::new(dir.path());
+    let skipper = Skipper::from_seed([7; 32]);
+    let id = found(&reg, &skipper, 4);
+    for s in 1..=3u8 {
+        append_body(
+            &reg,
+            id,
+            &skipper,
+            Body::Admit {
+                member: mk_member(s, 4),
+                member_pub: None,
+            },
+        );
+    }
+    append_body(
+        &reg,
+        id,
+        &skipper,
+        Body::Revoke {
+            tenant_id: TenantId::from_bytes([2; 16]),
+            at: 1,
+            reason: None,
+        },
+    );
+    assert!(reg.read_chain(id).unwrap().len() > 1);
+    let active = |reg: &FileRegistry| -> Vec<u8> {
+        reg.members(id).unwrap().iter().map(|m| m.tenant_id.0[0]).collect()
+    };
+    assert_eq!(active(&reg), vec![1, 3]);
+
+    reg.compact(id, &skipper).unwrap();
+    // Log is now a single signed checkpoint, members preserved.
+    assert_eq!(reg.read_chain(id).unwrap().len(), 1);
+    assert_eq!(active(&reg), vec![1, 3]);
+
+    // The chain keeps going on top of the checkpoint.
+    append_body(
+        &reg,
+        id,
+        &skipper,
+        Body::Admit {
+            member: mk_member(9, 4),
+            member_pub: None,
+        },
+    );
+    assert_eq!(active(&reg), vec![1, 3, 9]);
+}
+
+#[test]
+fn tampered_checkpoint_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = FileRegistry::new(dir.path());
+    let skipper = Skipper::from_seed([8; 32]);
+    let id = found(&reg, &skipper, 4);
+    append_body(
+        &reg,
+        id,
+        &skipper,
+        Body::Admit {
+            member: mk_member(1, 4),
+            member_pub: None,
+        },
+    );
+    reg.compact(id, &skipper).unwrap();
+
+    // Inject a phantom member into the checkpoint on disk: the signature
+    // no longer covers the set, so replay must reject it.
+    let log = dir.path().join(id.as_hex()).join("members.log");
+    let text = std::fs::read_to_string(&log).unwrap();
+    let tampered = text.replace("\"tenant_id\":\"01010101", "\"tenant_id\":\"ff010101");
+    assert_ne!(text, tampered);
+    std::fs::write(&log, tampered).unwrap();
+    assert!(reg.members(id).is_err());
+}
+
+#[test]
 fn impostor_link_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let reg = FileRegistry::new(dir.path());

@@ -345,9 +345,9 @@ where
     pub fn admit(&self, member: MemberRecord) -> Result<()> {
         let skipper = self.skipper.as_ref().ok_or(HansaError::Unauthorized)?;
         let head = replay(&self.registry.read_chain(self.id)?, Some(self.id))?;
-        if member.embedding_dim != head.genesis.embedding_dim {
+        if member.embedding_dim != head.embedding_dim {
             return Err(HansaError::DimMismatch {
-                existing: head.genesis.embedding_dim,
+                existing: head.embedding_dim,
                 joining: member.embedding_dim,
             });
         }
@@ -391,6 +391,14 @@ where
     /// All currently-active members of this hansa.
     pub fn members(&self) -> Result<Vec<MemberRecord>> {
         self.registry.members(self.id)
+    }
+
+    /// Collapse the members log to a signed checkpoint, bounding its
+    /// growth. Skipper-only. `append_next` also does this automatically
+    /// once the log grows large.
+    pub fn compact(&self) -> Result<()> {
+        let skipper = self.skipper.as_ref().ok_or(HansaError::Unauthorized)?;
+        self.registry.compact(self.id, skipper)
     }
 
     /// Rebuild the local saga from the tenant and persist it atomically

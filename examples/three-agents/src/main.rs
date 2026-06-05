@@ -349,7 +349,7 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 // =========================================================================
 
 fn main() {
-    rule("hansa M1 walkthrough - three agents share what they choose to");
+    rule("hansa walkthrough - three agents share what they choose, on a signed roster");
     println!(
         "Concept axes:\n  {}",
         CONCEPT_NAMES
@@ -387,8 +387,9 @@ fn main() {
 
     rule("setup - what each agent published to the registry");
     println!("\nHansaId: {}\n", a.hansa.id());
-    println!("All three agents derived the same HansaId from the shared HansaKey.");
-    println!("Each one wrote its saga to ~/.hansa/<HansaId>/sagas/<tenant>.saga\n");
+    println!("The id commits to the skipper key, so it pins who can admit members.");
+    println!("Each join is a skipper-signed link in the members log; each saga went");
+    println!("to ~/.hansa/<HansaId>/sagas/<tenant>.saga\n");
     for agent in [&a, &b, &c] {
         print_saga(agent);
     }
@@ -434,6 +435,34 @@ fn main() {
     subrule("rendered as markdown");
     println!("{}", bundle.render_markdown());
 
+    // ---------------------------------------------------------------
+    // Trust: the roster is a signed chain, and revocation is enforced
+    // at the membrane.
+    // ---------------------------------------------------------------
+    rule("trust - membership is signed, and revocation is enforced");
+    let c_tenant = TenantId::from_bytes([c.label as u8 - b'A' + 1; 16]);
+    println!(
+        "The members log is a hash-chained, skipper-signed log. Every admit and\n\
+         revoke is a signed link; replaying it is how a peer decides who is real.\n"
+    );
+    let before = a.hansa.members().expect("members");
+    println!("Members vouched for in the chain: {}", before.len());
+    for m in &before {
+        println!("  - tenant {}", &m.tenant_id.to_string()[..8]);
+    }
+
+    // A, holding the skipper, revokes agent C.
+    a.hansa.revoke(c_tenant).expect("revoke");
+    println!("\nSkipper signs a revoke for agent C (code).");
+
+    // Re-open A so it replays the chain including the revoke.
+    let a = spawn_agent(root, 'A', 1, "work", knowledge::work_notes());
+    let after = a.hansa.members().expect("members");
+    println!("Members after revoke: {} - C is no longer on the roster.\n", after.len());
+
+    println!("Re-running Q1: agent C's records no longer cross the membrane.");
+    run_query(&a, &[&a, &b, &c], &queries[0]);
+
     rule("summary");
     println!(
         "\nWhat hansa is doing under the hood:\n\
@@ -445,7 +474,10 @@ fn main() {
          3. Hits carry a provenance marker (Local vs Remote{{tenant_id}}) so the\n   \
             caller can render or rerank by source.\n\
          4. The membrane never exposes raw vectors, only the records the owner chose\n   \
-            to share. Knowing the HansaId without the HansaKey grants nothing.\n"
+            to share. Knowing the HansaId without the HansaKey grants nothing.\n\
+         5. Membership is a skipper-signed hash chain: a peer is trusted only if a\n   \
+            signature vouches for it, and a signed revoke drops it from every\n   \
+            honest membrane on the next replay - no key rotation needed.\n"
     );
 
     drop(tmp);

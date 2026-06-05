@@ -44,6 +44,7 @@ pub mod hybrid_registry;
 pub mod key;
 pub mod keystore;
 pub mod member;
+pub mod migrate;
 pub mod membrane;
 pub mod registry;
 pub mod saga;

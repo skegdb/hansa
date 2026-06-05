@@ -120,8 +120,8 @@ impl PeerManifest {
     ///
     /// - **Unknown** (`total_hits == 0`) - returns `1.0`. We've
     ///   never queried the peer; no signal either way.
-    /// - **Trial** (`useful_hits == 0` and `total_hits < TRIAL_RETURNS`)
-    ///   - returns `1.0`. Give every new peer the same `TRIAL_RETURNS`
+    /// - **Trial** (`useful_hits == 0` and `total_hits < TRIAL_RETURNS`):
+    ///   returns `1.0`. Give every new peer the same `TRIAL_RETURNS`
     ///   queries' worth of cooperation before any judgement.
     /// - **Cold** (F.4: `useful_hits == 0` and
     ///   `total_hits >= TRIAL_RETURNS`) - returns `< 1.0`. Each

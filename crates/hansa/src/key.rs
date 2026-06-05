@@ -15,6 +15,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use crate::HansaError;
 
 const HANSA_ID_DOMAIN: &[u8] = b"hansa-id-v1";
+const HANSA_ID_V2_DOMAIN: &[u8] = b"hansa-id-v2";
 
 /// 32-byte symmetric secret that defines membership in a hansa.
 ///
@@ -112,6 +113,30 @@ impl HansaId {
     /// 32 bytes.
     pub const LEN: usize = 32;
 
+    /// Derive the v2 identity that commits to a skipper's public key:
+    /// `blake3("hansa-id-v2" || skipper_pub)`.
+    ///
+    /// In the M3 trust model the id is no longer derived from the
+    /// symmetric [`HansaKey`]; it pins the skipper. A joiner told the
+    /// HansaId can recompute this from the genesis record's
+    /// `skipper_pub` and refuse if it does not match — SSH-style
+    /// fingerprint pinning folded into the identifier (see
+    /// `private/m3-security.md` §5.2, decision D1).
+    pub fn from_skipper(skipper_pub: &crate::sign::SkipperPub) -> HansaId {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(HANSA_ID_V2_DOMAIN);
+        hasher.update(&skipper_pub.as_bytes());
+        let mut out = [0u8; 32];
+        out.copy_from_slice(hasher.finalize().as_bytes());
+        HansaId(out)
+    }
+
+    /// Construct from raw bytes (e.g. an id a joiner was given
+    /// out-of-band).
+    pub fn from_bytes(bytes: [u8; 32]) -> HansaId {
+        HansaId(bytes)
+    }
+
     /// Hex representation (64 chars).
     pub fn as_hex(&self) -> String {
         let mut s = String::with_capacity(64);
@@ -124,6 +149,29 @@ impl HansaId {
     /// Raw bytes.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+}
+
+impl serde::Serialize for HansaId {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&self.as_hex())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for HansaId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        if s.len() != 64 {
+            return Err(serde::de::Error::custom(format!(
+                "expected 64-char hex hansa id, got {}",
+                s.len()
+            )));
+        }
+        let mut out = [0u8; 32];
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).map_err(serde::de::Error::custom)?;
+        }
+        Ok(HansaId(out))
     }
 }
 

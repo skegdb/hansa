@@ -35,6 +35,7 @@ pub mod background;
 pub mod cache;
 pub mod context;
 pub mod error;
+pub mod genesis;
 pub mod manifest;
 pub mod hansa;
 pub mod hybrid_registry;
@@ -55,6 +56,7 @@ pub use context::{
     TokenDensityRanker, Tokenizer,
 };
 pub use error::HansaError;
+pub use genesis::{Genesis, GENESIS_V};
 pub use hansa::{CAP_HANSA_MEMBER, CAP_HANSA_MEMBRANE, Hansa, HansaConfig};
 pub use hybrid_registry::HybridRegistry;
 pub use key::{HansaId, HansaKey};

@@ -95,6 +95,7 @@ fn spawn_agent(root: &std::path::Path, label: u8, unit_at: usize, shareable_coun
         saga_dir,
         peer_opener: Some(path_only_opener()),
         default_budget: TokenBudget::split(20, 30),
+            head_cache_dir: None,
             #[cfg(feature = "tokio")]
             async_peer_opener: None,
     })

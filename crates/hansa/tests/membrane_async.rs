@@ -87,6 +87,7 @@ fn spawn_agent(root: &std::path::Path, label: u8, unit_at: usize) -> Hansa<Tenan
         saga_dir,
         peer_opener: None,
         default_budget: TokenBudget::split(20, 30),
+        head_cache_dir: None,
         async_peer_opener: Some(async_opener()),
     })
     .unwrap()

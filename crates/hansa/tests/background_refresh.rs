@@ -64,6 +64,7 @@ fn background_task_rebuilds_saga_after_growth() {
         saga_dir,
         peer_opener: None,
         default_budget: TokenBudget::default(),
+            head_cache_dir: None,
             #[cfg(feature = "tokio")]
             async_peer_opener: None,
     })

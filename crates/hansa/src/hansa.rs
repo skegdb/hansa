@@ -149,6 +149,10 @@ pub struct HansaConfig<T> {
     /// Default budget for [`Hansa::query`]. The query builder lets a
     /// caller override this.
     pub default_budget: TokenBudget,
+    /// Directory for the anti-rollback head cache, kept outside the
+    /// shared registry. `Some` enables rollback detection on open;
+    /// `None` disables it. See [`crate::head_cache`].
+    pub head_cache_dir: Option<PathBuf>,
     /// Async peer opener used by [`Hansa::query_async`]. Only present
     /// when the `tokio` feature is enabled. Set to `None` to leave
     /// async queries in local-only mode; set to `Some(opener)` to
@@ -231,7 +235,16 @@ where
             }
         }
         // Verifies signatures, hash chain, and the id<->skipper binding.
-        replay(&config.registry.read_chain(id)?, Some(id))?;
+        let outcome = replay(&config.registry.read_chain(id)?, Some(id))?;
+        // Anti-rollback: refuse a chain whose head regressed below what
+        // this member last verified.
+        if let Some(dir) = &config.head_cache_dir {
+            crate::head_cache::HeadCache::new(dir).check_and_record(
+                id,
+                outcome.head_seq,
+                outcome.head_hash,
+            )?;
+        }
 
         // Manifests live alongside the saga store under a sibling
         // `manifests/` dir. Derived rather than configured so the
@@ -642,6 +655,7 @@ mod tests {
             saga_dir,
             peer_opener: None,
             default_budget: crate::membrane::TokenBudget::default(),
+            head_cache_dir: None,
             #[cfg(feature = "tokio")]
             async_peer_opener: None,
         })

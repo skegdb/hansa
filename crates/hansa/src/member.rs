@@ -20,7 +20,39 @@ pub struct MemberRecord {
     pub joined_at: i64,
 }
 
-mod tenant_id_hex {
+impl MemberRecord {
+    /// Deterministic, length-prefixed encoding for signing. Covers every
+    /// field including the location variant, so a skipper's `Admit`
+    /// signature vouches for *where* a member lives, not just its id.
+    /// Never derived from JSON (which is not canonical).
+    pub fn canonical(&self) -> Vec<u8> {
+        use crate::sign::canonical::Writer;
+        let w = Writer::new()
+            .fixed(&self.tenant_id.0)
+            .u32(self.embedding_dim)
+            .i64(self.joined_at);
+        let w = match &self.tenant_location {
+            TenantLocation::Path { path } => w.u8(0).str(&path.to_string_lossy()),
+            TenantLocation::Resp3 { endpoint, auth } => {
+                let w = w.u8(1).str(endpoint);
+                match auth {
+                    None => w.u8(0),
+                    Some((user, pass)) => w.u8(1).str(user).str(pass),
+                }
+            }
+            TenantLocation::Http { base_url, bearer } => {
+                let w = w.u8(2).str(base_url);
+                match bearer {
+                    None => w.u8(0),
+                    Some(token) => w.u8(1).str(token),
+                }
+            }
+        };
+        w.finish()
+    }
+}
+
+pub(crate) mod tenant_id_hex {
     use serde::{Deserialize, Deserializer, Serializer};
     use skeg_rigging::TenantId;
 

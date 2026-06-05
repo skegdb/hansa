@@ -33,6 +33,7 @@
 
 pub mod background;
 pub mod cache;
+pub mod chain;
 pub mod context;
 pub mod error;
 pub mod genesis;

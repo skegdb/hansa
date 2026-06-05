@@ -162,6 +162,33 @@ fn membrane_returns_local_and_remote_with_provenance() {
 }
 
 #[test]
+fn revoked_peer_drops_from_membrane() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = spawn_agent(dir.path(), 1, 0, 15);
+    let b = spawn_agent(dir.path(), 2, 1, 15);
+    let c = spawn_agent(dir.path(), 3, 2, 15);
+    join_all(&[a, b, c]);
+    let a = spawn_agent(dir.path(), 1, 0, 15);
+
+    // Query on C's axis (unit-z): C should contribute remote hits.
+    let q = near_unit(2, 0.0);
+    let c_tid = TenantId::from_bytes([3; 16]);
+    let crossed = |hits: &[MembraneHit]| {
+        hits.iter()
+            .any(|h| matches!(h.origin, HitOrigin::Remote { tenant_id } if tenant_id == c_tid))
+    };
+
+    let before = a.hansa.query(&q).unwrap().top_k(10).execute().unwrap();
+    assert!(crossed(&before), "C should contribute before revoke");
+
+    // Skipper revokes C; reopen A so it replays the chain with the revoke.
+    a.hansa.revoke(c_tid).unwrap();
+    let a = spawn_agent(dir.path(), 1, 0, 15);
+    let after = a.hansa.query(&q).unwrap().top_k(10).execute().unwrap();
+    assert!(!crossed(&after), "C still crossed the membrane after revoke");
+}
+
+#[test]
 fn membrane_skips_offline_peers() {
     let dir = tempfile::tempdir().unwrap();
     let a = spawn_agent(dir.path(), 1, 0, 15);

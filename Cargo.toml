@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/hansa",
+    "crates/hansa-cli",
     "examples/three-agents",
     "examples/hansa-agent",
     "examples/bench-report",

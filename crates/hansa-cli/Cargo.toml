@@ -18,7 +18,7 @@ hansa = { path = "../hansa", version = "0.2.0" }
 skeg-rigging = { workspace = true }
 skeg-rigging-net = { workspace = true }
 skeg-rigging-skeg = { workspace = true }
-skeg-rigging-ingest = { path = "../../../skeg-rigging/crates/skeg-rigging-ingest", version = "0.1.0", features = ["watch"] }
+skeg-rigging-ingest = { version = "0.1.2", features = ["watch"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }

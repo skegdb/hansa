@@ -1772,16 +1772,19 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 [[package]]
 name = "skeg-hull"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c268a036db6a8e1c82c7a9b8622bbba38392a4a52a3a5cbdb798f454739145e"
 dependencies = [
  "bytes",
  "crc32c",
- "memmap2",
  "thiserror",
 ]
 
 [[package]]
 name = "skeg-multi-tenant"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59db35a7078a62f37603d148be86e897c04fcb095a8daa7ddaeea0291e04514f"
 dependencies = [
  "skeg-rigging",
  "skeg-rigging-skeg",
@@ -1805,6 +1808,8 @@ dependencies = [
 [[package]]
 name = "skeg-rigging"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79487bda89b3ac20166d9a1ed97ce0704386b831c27e57a537a0a85b51f20a7e"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1815,7 +1820,9 @@ dependencies = [
 
 [[package]]
 name = "skeg-rigging-ingest"
-version = "0.1.1"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3a1668e9d0816a56f60e7fa7f3591f153fc5f93eab1544cac48c6ed4c6284b6"
 dependencies = [
  "anyhow",
  "notify",
@@ -1827,6 +1834,8 @@ dependencies = [
 [[package]]
 name = "skeg-rigging-net"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b140126805b5a2bf095d18fc30559d2c1e327bc89d7f9063cd88ad72a23035b"
 dependencies = [
  "bytes",
  "crc32c",
@@ -1840,6 +1849,8 @@ dependencies = [
 [[package]]
 name = "skeg-rigging-net-http"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99fbf1b3eead098c45827f75c059ea92f5d689e989307ede983ecd63522f7eed"
 dependencies = [
  "bytes",
  "serde",
@@ -1854,6 +1865,8 @@ dependencies = [
 [[package]]
 name = "skeg-rigging-skeg"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b93704ba1c3c1733f7de64d17388e96a39c294e1743580c788d55716bcdacff"
 dependencies = [
  "bytes",
  "parking_lot",
@@ -1876,6 +1889,8 @@ dependencies = [
 [[package]]
 name = "skeg-tenant"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81fe7891fc03ce5280a60b73b929f0923c0724fa75fde814681090e24f80125a"
 dependencies = [
  "ahash",
  "argon2",

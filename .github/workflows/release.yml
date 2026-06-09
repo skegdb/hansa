@@ -2,9 +2,9 @@ name: Release
 
 # Publishes hansa, then hansa-cli, to crates.io in dependency order
 # (hansa-cli depends on hansa). A short sleep lets the new hansa version
-# propagate on the crates.io index before hansa-cli is verified against
-# it. Trigger with a `v*` tag, or run manually (dry_run defaults to true
-# so a manual run verifies without uploading).
+# reach the index before hansa-cli is verified against it. Trigger with a
+# `v*` tag, or run manually (dry_run defaults to true so a manual run
+# verifies without uploading).
 
 on:
   push:

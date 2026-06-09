@@ -23,11 +23,11 @@ homepage = "https://github.com/skegdb/hansa"
 authors = ["skeg contributors"]
 
 [workspace.dependencies]
-skeg-rigging = { path = "../skeg-rigging/crates/skeg-rigging", version = "0.1.0" }
-skeg-rigging-skeg = { path = "../skeg-rigging/crates/skeg-rigging-skeg", version = "0.1.0" }
-skeg-rigging-net = { path = "../skeg-rigging-net/crates/skeg-rigging-net", version = "0.1.0" }
-skeg-rigging-net-http = { path = "../skeg-rigging-net/crates/skeg-rigging-net-http", version = "0.1.0" }
-skeg-hull = { path = "../skeg-hull/crates/skeg-hull", version = "0.1.0" }
+skeg-rigging = "0.1.1"
+skeg-rigging-skeg = "0.1.1"
+skeg-rigging-net = "0.1"
+skeg-rigging-net-http = "0.1"
+skeg-hull = "0.1"
 bytes = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

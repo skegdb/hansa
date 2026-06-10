@@ -1,73 +1,69 @@
 # hansa
 
-> *Federation primitive for skeg. Lets local AI agents form trust
-> groups and query across each other's memory without dumping context.*
+Federation primitive for [skeg](https://github.com/skegdb/skeg). Lets local AI
+agents form trust groups and query across each other's memory without dumping
+context.
 
-A **hansa** is a trust group of agents that hold the same
-[`HansaKey`]. Each agent keeps its own memory private by default and
-opts in per record via a `shareable` flag. A query made through one
-member's [`Hansa`] handle can fan out, under an explicit token budget,
-to peers whose [`Saga`] (digest) suggests they hold relevant records.
+A **hansa** is a trust group of agents that share one secret key. Each agent
+keeps its own memory private by default and opts a record into sharing with a
+`shareable` flag. A query made through one member's handle can fan out, under an
+explicit token budget, to the peers whose digest suggests they hold relevant
+records. Only records marked shareable ever leave their owner.
 
-The mental model is the Hanseatic League: autonomous entities forming
-alliances of mutual commerce, each sovereign in its own port, sharing
-routes when it serves them. **Not** a distributed database, **not** a
-synchronization protocol, **not** a hive mind. A discovery + access
-mechanism with explicit cost accounting.
+The mental model is the Hanseatic League: autonomous entities forming alliances
+of mutual commerce, each sovereign in its own port, sharing routes when it
+serves them. It is not a distributed database, not a synchronization protocol,
+and not a hive mind. It is a discovery and access mechanism with explicit cost
+accounting.
 
-## What's in 0.2.0
+## What it is
 
-A single user, several agent processes on one machine, filesystem-local
-discovery — with a **signed membership roster** (see [Trust](#trust-model-v02)).
+hansa is a Rust library. You embed it in an agent process, point it at a local
+skeg vault, and join a hansa. Membership is a signed, hash-chained roster on the
+filesystem; queries read peers' vaults read-only and respect each record's
+shareable flag at the source.
 
-- [`HansaKey`] (32-byte secret, zeroized on drop, BLAKE3-KDF from passphrase)
-- [`Skipper`] (ed25519 signing authority); [`HansaId`] commits to it
-- Three [`Keystore`] impls: [`EnvKeystore`], [`FileKeystore`], [`MemoryKeystore`]
-- [`FileRegistry`]: skipper-signed, hash-chained `members.log` with signed
-  checkpoint compaction; replay verifies every link
-- Selective revocation enforced at the membrane; opt-in anti-rollback
-  head cache; `migrate_v1` for old unsigned hansas
-- [`Saga`]: condensed memory digest (k-means++ over a reservoir sample, top-N tag aggregate)
-  persisted via [`skeg-hull`](https://github.com/skegdb/skeg-hull) SagaV1
-- Membrane query path: local query + saga-scored peer fan-out under
-  [`TokenBudget`] cap, parallel via `rayon`, `shareable` filter at the source
-- Hit set carries [`HitOrigin`] (Local vs `Remote { tenant_id }`)
-- `TenantInfo` / `TenantLifecycle` on `Hansa`, with `hansa.member` /
-  `hansa.membrane` capabilities
-- Peer failure (offline, locked, corrupt) → log + skip, never aborts the query
+Version 0.2 targets a single user running several agent processes on one
+machine, with filesystem-local discovery. Cross-machine federation is not in
+this release.
 
-Out of scope for 0.2.0: distributed consistency, cross-machine
-federation, per-record provenance signing, in-band skipper rotation,
-confidentiality against malicious key-holders reading shared records.
-See [private/roadmap.md][roadmap] for what M4-M6 add.
+A command-line front end, [`hansa-cli`](crates/hansa-cli), wraps the library so
+the same trust groups can be created, fed, and queried without writing any Rust.
 
-## Walkthrough - three agents
+## Install
+
+The library:
 
 ```sh
-cargo run -p three-agents
+cargo add hansa
 ```
 
-Three in-process agents (work / research / code) populate distinct
-domains, mark some records private, join one hansa. The program then
-runs three queries and prints the hit set with provenance and the
-records that *would* have matched but were blocked by the `shareable`
-flag - so you can see exactly what crossed the membrane and what did
-not.
-
-## Cross-process
+The command-line tool:
 
 ```sh
-cargo test -p hansa --test cross_process
+cargo install hansa-cli
 ```
 
-Spawns three real OS processes that share one filesystem root, joins
-the hansa from each, then queries from a fourth process. Validates
-that `members.log`, `.saga` files, and the JSON sidecar all survive
-across pid boundaries. A `concurrent_populate` variant runs the three
-populators in parallel to exercise the registry's append path under
-race conditions.
+Both require a Rust toolchain (MSRV 1.88).
 
-## Quick API tour
+## Command-line quickstart
+
+The secret that binds a hansa is a passphrase. Anyone who runs `hansa init` with
+the same hansa name and passphrase joins the same group. Storing and querying
+embed text through a local [Ollama](https://ollama.com)-compatible endpoint, so
+have one running with an embedding model pulled.
+
+```sh
+hansa init --name team --tenant me --passphrase "correct horse battery"
+hansa remember "the deploy runbook is in ops/deploy.md" --share
+hansa ingest ./docs --ext md          # embed a whole directory
+hansa query "where is the deploy runbook?"
+```
+
+See the [CLI guide](crates/hansa-cli/README.md) for the full command set
+(agents, ingest, watch, members, revoke).
+
+## Library API tour
 
 ```rust
 use std::sync::Arc;
@@ -82,7 +78,7 @@ let tenant = Arc::new(Tenant::open("/path/to/vault", TenantId::ZERO, 768)?);
 
 let h = Hansa::open(HansaConfig {
     key,
-    skipper: Some(skipper), // hold it to found and admit/revoke; None = read-only member
+    skipper: Some(skipper), // hold it to found and admit/revoke; None is a read-only member
     hansa_id: None,         // derived from the skipper; a joiner passes Some(id) instead
     registry: Arc::new(FileRegistry::default_root()),
     local_tenant: tenant.clone(),
@@ -97,7 +93,7 @@ let h = Hansa::open(HansaConfig {
     head_cache_dir: None,   // Some(dir) enables anti-rollback
 })?;
 
-h.join(/* tags */ Vec::<String>::new())?; // the skipper admits the local tenant
+h.join(Vec::<String>::new())?; // the skipper admits the local tenant
 
 let hits = h
     .query(&query_embedding)?
@@ -106,117 +102,91 @@ let hits = h
     .execute()?;
 ```
 
+The `three-agents` example is a full in-process walkthrough: three agents
+populate distinct domains, mark some records private, join one hansa, and run
+queries that show exactly what crossed the membrane and what the shareable flag
+held back.
+
+```sh
+cargo run -p three-agents
+```
+
+## Trust model
+
+Membership is a skipper-signed, hash-chained log. A hansa is founded with an
+ed25519 keypair (the skipper); the hansa id commits to the skipper key, so
+knowing the id pins it. Every admit and revoke is a signed link, and a member is
+trusted only if a signature vouches for it, verified on replay rather than taken
+on faith from the filesystem.
+
+hansa protects against:
+
+- accidental cross-hansa or cross-tenant leakage; records are scoped by key, and
+  `shareable: false` never crosses.
+- outsiders without the key; the hansa id alone grants nothing.
+- forged or evicted membership; only the skipper can admit or revoke, and a
+  rewritten or reordered log fails replay.
+- rollback against a returning member, via the opt-in head cache.
+
+hansa does not protect against:
+
+- a compromised skipper key; recovery is founding a new hansa.
+- key-holders reading what was marked shareable.
+- network attackers; version 0.2 is filesystem-local.
+- filesystem tampering as denial of service; integrity is detected, but
+  availability is an OS-permissions and backup concern.
+
+The reasoning behind each line is in
+[docs/threat-model.md](docs/threat-model.md).
+
 ## Storage layout
 
 ```text
 ~/.hansa/<hansa-id-hex>/
-  members.log          # newline-delimited JSON events
-  members.snap         # periodic snapshot
-  sagas/<tenant>.saga  # SagaV1 binary digest per member
+  members.log          # signed, hash-chained membership events
+  sagas/<tenant>.saga  # binary memory digest per member
   lock                 # advisory lock for compaction
 ```
 
-## Trust model (v0.2)
+## Status
 
-Membership is a **skipper-signed, hash-chained log**. A hansa is founded
-with an ed25519 keypair (the skipper); the id commits to the skipper key,
-so knowing the id pins it. Every admit and revoke is a signed link, and a
-member is trusted only if a signature vouches for it — verified on replay,
-not taken on faith from the filesystem.
+Working in 0.2:
 
-Hansa protects against:
+- Passphrase-derived key, ed25519 skipper, three keystore backends (env, file,
+  in-memory).
+- Signed, hash-chained `members.log` with checkpoint compaction and replay
+  verification; selective revocation; opt-in anti-rollback head cache.
+- Memory digest (saga) per member, persisted in skeg's on-disk format.
+- Membrane query path: local query plus saga-scored peer fan-out under a token
+  budget, parallelized, with the shareable filter applied at the source.
+- A peer that is offline, locked, or corrupt is logged and skipped; it never
+  aborts the query.
 
-- accidental cross-hansa / cross-tenant leakage (records scoped by key;
-  `shareable: false` never crosses)
-- outsiders without the key (HansaId alone grants nothing)
-- forged or evicted membership (only the skipper can admit/revoke; a
-  rewritten or reordered log fails replay)
-- rollback against a returning member (opt-in head cache)
+Not in 0.2:
 
-Hansa does **not** protect against:
+- Cross-machine federation, distributed consistency, per-record provenance
+  signing, in-band skipper rotation, and confidentiality against key-holders who
+  read shared records.
 
-- a compromised **skipper** key (recovery is founding a new hansa)
-- malicious key-holders reading what was marked `shareable`
-- network attackers (v0.2 is filesystem-local)
-- filesystem tampering as a denial-of-service (integrity is detected,
-  availability is an OS-permissions / backup concern)
+## Documentation
 
-The full version, with the reasoning and the milestone that lifts each
-limit, is in [docs/threat-model.md](docs/threat-model.md).
+Guides live in this repository:
 
-## Guides
+- [docs/threat-model.md](docs/threat-model.md): what one shared key does and does
+  not buy you.
+- [docs/plugin-guide.md](docs/plugin-guide.md): the four traits hansa lets you
+  swap (registry, keystore, tokenizer, ranker) and the peer-opener seam.
+- [docs/deployment.md](docs/deployment.md): layouts that work in 0.2, saga
+  freshness, the query budget knobs, and sync versus async fan-out.
 
-- [docs/plugin-guide.md](docs/plugin-guide.md) - the four traits hansa
-  lets you swap (`Registry`, `Keystore`, `Tokenizer`, `Ranker`) plus
-  the `peer_opener` seam.
-- [docs/deployment.md](docs/deployment.md) - layouts that work in v0.2,
-  saga freshness, the query budget knobs, sync vs async fan-out.
-- [docs/threat-model.md](docs/threat-model.md) - what one shared key
-  does and does not buy you.
-
-## Roadmap
-
-See [private/roadmap.md][roadmap]:
-
-| Milestone       | Status   | What it adds                                                                       |
-| --------------- | -------- | ---------------------------------------------------------------------------------- |
-| M1 Foundation   | **done** | join/leave/query end-to-end                                                        |
-| M2 Hardening    | **done** | background saga refresh, threat-model/plugin/deployment docs                       |
-| M3 Lifecycle    | **done** | `TenantLifecycle`/`TenantInfo` on Hansa, skipper-signed roster, revocation         |
-| M4 Events       | next     | `TenantEvents` push notifications, pheromone trail                                 |
-| M5 Accounting   | future   | quotas, stats, searchable encryption                                               |
-| M6 Engine-ready | future   | network registry, spawn/seed/sign                                                  |
-
-## Planned features
-
-- [private/features.md][features] - master feature index across the
-  five repos (hansa, skeg-rigging, skeg-hull, skeg-rigging-net,
-  skeg-rigging-skeg-tenant). Each entry carries status, milestone, and
-  dependencies.
-- [private/design-token-efficiency.md][token-eff] - design for the
-  token-saving features: semantic dedup, density ranking, negative
-  caching, provenance-collapsed rendering, bundle caching, binary
-  wire format.
-- [private/design-operational-efficiency.md][op-eff] - design for the
-  performance work: RESP3 connection pooling, HTTP saga distribution,
-  async query path, pheromone trail (peer reputation), incremental
-  saga refresh, membrane latency budgets, RESP3 push notifications,
-  quantised saga centroids.
-
-## Building, testing, benching
+## Building and testing
 
 ```sh
-# Build the lot
 cargo build --workspace
-
-# All correctness tests (unit + integration + cross-process)
 cargo test --workspace
-
-# Performance + token-efficiency gates (CI gating, see private/gates.md)
-cargo test --release --test gates
-
-# Informational benchmark snapshot (pretty output, no gate enforcement)
-cargo run --release -p bench-report
-
-# Criterion detailed benches (writes HTML to target/criterion/)
-cargo bench --bench saga_build
-cargo bench --bench saga_score
-cargo bench --bench context_assembly
-
-# Walkthrough demo (three agents sharing knowledge)
-cargo run -p three-agents
+cargo run -p three-agents      # the walkthrough demo
 ```
-
-Gate thresholds live in [`private/gates.md`][gates] and are enforced
-by the `gates` test. Touching one requires an explicit reason in the
-commit message; see §3 of that doc.
 
 ## License
 
-Apache-2.0.
-
-[features]: ./private/features.md
-[token-eff]: ./private/design-token-efficiency.md
-[op-eff]: ./private/design-operational-efficiency.md
-[roadmap]: ./private/roadmap.md
-[gates]: ./private/gates.md
+[Apache-2.0](LICENSE).
